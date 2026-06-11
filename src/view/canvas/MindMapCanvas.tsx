@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { Sheet, TopicId } from '@/core/model/types';
 import { collectDescendantIds } from '@/core/commands/tree';
 import { layoutSheet } from '@/layout';
@@ -10,12 +10,13 @@ import { TopicView } from '@/view/topic/TopicView';
 interface MindMapCanvasProps {
   sheet: Sheet;
   selectedTopicId: TopicId | null;
+  editTopicId?: TopicId | null;
+  onEditTopicIdConsumed?: () => void;
+  onEditingTopicChange?: (topicId: TopicId | null) => void;
   /** Active map theme id — included so layout (edge colors) recomputes on change. */
   themeId?: string;
   onSelectTopic: (topicId: TopicId) => void;
   onTopicTextChange: (topicId: TopicId, text: string) => void;
-  onInsertChild: (topicId: TopicId, pendingText?: string) => void;
-  onInsertSibling: (topicId: TopicId, pendingText?: string) => void;
   onOpenNotesPanel: (topicId: TopicId) => void;
   onToggleCollapse: (topicId: TopicId) => void;
 }
@@ -23,15 +24,32 @@ interface MindMapCanvasProps {
 export function MindMapCanvas({
   sheet,
   selectedTopicId,
+  editTopicId = null,
+  onEditTopicIdConsumed,
+  onEditingTopicChange,
   themeId = DEFAULT_MAP_THEME_ID,
   onSelectTopic,
   onTopicTextChange,
-  onInsertChild,
-  onInsertSibling,
   onOpenNotesPanel,
   onToggleCollapse,
 }: MindMapCanvasProps) {
   const [liveEdit, setLiveEdit] = useState<{ topicId: TopicId; text: string } | null>(null);
+  const editingTopicRef = useRef<TopicId | null>(null);
+
+  const handleEditingChange = useCallback(
+    (topicId: TopicId, editing: boolean) => {
+      if (editing) {
+        editingTopicRef.current = topicId;
+        onEditingTopicChange?.(topicId);
+        return;
+      }
+      if (editingTopicRef.current === topicId) {
+        editingTopicRef.current = null;
+        onEditingTopicChange?.(null);
+      }
+    },
+    [onEditingTopicChange],
+  );
 
   const handleLiveTextChange = useCallback((topicId: TopicId, text: string | null) => {
     setLiveEdit(text === null ? null : { topicId, text });
@@ -115,11 +133,12 @@ export function MindMapCanvas({
             layout={nodeLayout}
             themeId={themeId}
             selected={topicId === selectedTopicId}
+            autoFocusEdit={topicId === editTopicId}
+            onAutoFocusEditConsumed={onEditTopicIdConsumed}
+            onEditingChange={(editing) => handleEditingChange(topicId, editing)}
             onSelect={onSelectTopic}
             onTextChange={onTopicTextChange}
             onLiveTextChange={handleLiveTextChange}
-            onInsertChild={onInsertChild}
-            onInsertSibling={onInsertSibling}
             onOpenNotes={onOpenNotesPanel}
           />
         ))}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { MapCanvasStyle } from '@/layout/theme';
+import { ViewportNavHint } from '@/view/canvas/ViewportNavHint';
 
 export interface ViewportState {
   x: number;
@@ -17,6 +18,8 @@ interface ViewportProps {
   initialViewport?: ViewportState;
   onViewportChange?: (viewport: ViewportState) => void;
   onClearSelection?: () => void;
+  showNavHint?: boolean;
+  onDismissNavHint?: () => void;
 }
 
 const MIN_ZOOM = 0.25;
@@ -24,7 +27,7 @@ const MAX_ZOOM = 2.5;
 const ZOOM_FACTOR = 1.08;
 
 const INTERACTIVE_SELECTOR =
-  '.topic-view, .topic-view__notes-button, .collapse-handle, .topic-notes-panel-wrap, .floating-toolbar-wrap, .bottom-panel, .theme-sidebar';
+  '.topic-view, .topic-view__notes-button, .collapse-handle, .topic-notes-panel-wrap, .floating-toolbar-wrap, .bottom-panel, .theme-sidebar, .viewport__hud';
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
   return Boolean((target as HTMLElement | null)?.closest(INTERACTIVE_SELECTOR));
@@ -46,6 +49,8 @@ export function Viewport({
   initialViewport = { x: 0, y: 0, zoom: 1 },
   onViewportChange,
   onClearSelection,
+  showNavHint = false,
+  onDismissNavHint,
 }: ViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [internalViewport, setInternalViewport] = useState<ViewportState>(initialViewport);
@@ -205,9 +210,9 @@ export function Viewport({
         {children}
       </div>
       {overlay && <div className="viewport__overlay">{overlay}</div>}
-      <div className="viewport__hud">
-        Right-drag or two-finger pan · Scroll or pinch to zoom
-      </div>
+      {showNavHint && onDismissNavHint ? (
+        <ViewportNavHint onDismiss={onDismissNavHint} />
+      ) : null}
     </div>
   );
 }

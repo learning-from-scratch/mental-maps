@@ -22,11 +22,12 @@ interface TopicViewProps {
   layout: NodeLayout;
   themeId?: string;
   selected?: boolean;
+  autoFocusEdit?: boolean;
+  onAutoFocusEditConsumed?: () => void;
+  onEditingChange?: (editing: boolean) => void;
   onSelect?: (topicId: TopicId) => void;
   onTextChange?: (topicId: TopicId, text: string) => void;
   onLiveTextChange?: (topicId: TopicId, text: string | null) => void;
-  onInsertChild?: (topicId: TopicId, pendingText?: string) => void;
-  onInsertSibling?: (topicId: TopicId, pendingText?: string) => void;
   onOpenNotes?: (topicId: TopicId) => void;
 }
 
@@ -37,11 +38,12 @@ export function TopicView({
   layout,
   themeId = DEFAULT_MAP_THEME_ID,
   selected = false,
+  autoFocusEdit = false,
+  onAutoFocusEditConsumed,
+  onEditingChange,
   onSelect,
   onTextChange,
   onLiveTextChange,
-  onInsertChild,
-  onInsertSibling,
   onOpenNotes,
 }: TopicViewProps) {
   const [isEditing, setIsEditing] = useState(false);
@@ -49,16 +51,18 @@ export function TopicView({
   const [editWidthExtra, setEditWidthExtra] = useState(0);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const draftTextRef = useRef(draftText);
+  const isEditingRef = useRef(isEditing);
   draftTextRef.current = draftText;
+  isEditingRef.current = isEditing;
 
   const commitEdit = useCallback(() => {
-    setIsEditing((editing) => {
-      if (!editing) return false;
-      const nextText = draftTextRef.current.trim() || text;
-      if (nextText !== text) onTextChange?.(topicId, nextText);
-      return false;
-    });
-  }, [text, topicId, onTextChange]);
+    if (!isEditingRef.current) return;
+    const nextText = draftTextRef.current.trim() || text;
+    isEditingRef.current = false;
+    setIsEditing(false);
+    onEditingChange?.(false);
+    if (nextText !== text) onTextChange?.(topicId, nextText);
+  }, [text, topicId, onTextChange, onEditingChange]);
 
   useEffect(() => {
     if (!isEditing) setDraftText(text);
@@ -72,11 +76,34 @@ export function TopicView({
     onLiveTextChange?.(topicId, draftText);
   }, [isEditing, draftText, topicId, onLiveTextChange]);
 
+  useEffect(() => {
+    onEditingChange?.(isEditing);
+  }, [isEditing, onEditingChange]);
+
+  const selectAllOnEditRef = useRef(false);
+
+  useLayoutEffect(() => {
+    if (!autoFocusEdit || !selected || isEditing) return;
+    setDraftText(text);
+    selectAllOnEditRef.current = true;
+    setIsEditing(true);
+  }, [autoFocusEdit, selected, isEditing, text]);
+
+  useLayoutEffect(() => {
+    if (!autoFocusEdit || !isEditing) return;
+    onAutoFocusEditConsumed?.();
+  }, [autoFocusEdit, isEditing, onAutoFocusEditConsumed]);
+
   useLayoutEffect(() => {
     if (!isEditing) return;
     const editor = editorRef.current;
     if (!editor) return;
     editor.focus();
+    if (selectAllOnEditRef.current) {
+      selectAllOnEditRef.current = false;
+      editor.setSelectionRange(0, editor.value.length);
+      return;
+    }
     const end = editor.value.length;
     editor.setSelectionRange(end, end);
   }, [isEditing]);
@@ -141,7 +168,9 @@ export function TopicView({
 
   const cancelEdit = () => {
     setDraftText(text);
+    isEditingRef.current = false;
     setIsEditing(false);
+    onEditingChange?.(false);
   };
 
   const editMeasurement = useMemo(() => {
@@ -244,18 +273,10 @@ export function TopicView({
             onBlur={commitEdit}
             onKeyDown={(event) => {
               event.stopPropagation();
-              if (event.key === 'Enter' && !event.shiftKey) {
+              if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
                 event.preventDefault();
-                const pendingText = draftTextRef.current;
-                setIsEditing(false);
-                onLiveTextChange?.(topicId, null);
-                onInsertSibling?.(topicId, pendingText);
-              } else if (event.key === 'Tab') {
-                event.preventDefault();
-                const pendingText = draftTextRef.current;
-                setIsEditing(false);
-                onLiveTextChange?.(topicId, null);
-                onInsertChild?.(topicId, pendingText);
+                commitEdit();
+                editorRef.current?.blur();
               } else if (event.key === 'Escape') {
                 event.preventDefault();
                 cancelEdit();

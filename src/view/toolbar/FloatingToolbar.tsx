@@ -17,6 +17,8 @@ interface FloatingToolbarProps {
   activeProjectId: string;
   onSelectProject: (projectId: string) => void;
   onCreateProject: () => void;
+  onInsertSibling: () => void;
+  onInsertChild: () => void;
   onAddContent: () => void;
   onAddComment: () => void;
 }
@@ -149,6 +151,8 @@ export function FloatingToolbar({
   activeProjectId,
   onSelectProject,
   onCreateProject,
+  onInsertSibling,
+  onInsertChild,
   onAddContent,
   onAddComment,
 }: FloatingToolbarProps) {
@@ -166,6 +170,7 @@ export function FloatingToolbar({
       shortcut: 'Enter',
       description: 'Add a topic after a selected topic',
       disabled: !hasSelection,
+      onClick: onInsertSibling,
     },
     {
       id: 'add-sibling',
@@ -174,6 +179,7 @@ export function FloatingToolbar({
       shortcut: 'Tab',
       description: 'Add a child topic to the selected topic',
       disabled: !hasSelection,
+      onClick: onInsertChild,
     },
     {
       id: 'relationship',

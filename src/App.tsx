@@ -1,5 +1,6 @@
 import { produce } from 'immer';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { addChild, addSibling, deleteTopics } from '@/core/commands/commands';
 import { duplicateSheet } from '@/core/model/duplicateSheet';
 import { createSheet } from '@/core/model/factories';
@@ -19,6 +20,10 @@ import {
    resolveSheetThemeId,
 } from '@/layout/theme';
 import { layoutSheet } from '@/layout';
+import {
+   isViewportNavHintDismissed,
+   markViewportNavHintDismissed,
+} from '@/prefs/viewportNavHint';
 import { createMap, listMaps, loadMap, saveMap } from '@/persistence/maps';
 import { MindMapCanvas } from '@/view/canvas/MindMapCanvas';
 import { Viewport, type ViewportState } from '@/view/canvas/Viewport';
@@ -152,11 +157,11 @@ function insertSiblingInDraft(draft: Sheet, topicId: TopicId, themeId: string): 
    return insertedTopicId;
 }
 
-function applyPendingTopicText(draft: Sheet, topicId: TopicId, pendingText: string) {
-   const topic = draft.topicsById[topicId];
-   if (!topic) return;
-   const trimmed = pendingText.trim();
-   if (trimmed) topic.text = trimmed;
+function findInsertedTopicId(before: Sheet, after: Sheet): TopicId | null {
+   for (const id of Object.keys(after.topicsById)) {
+      if (!before.topicsById[id]) return id;
+   }
+   return null;
 }
 
 function nextSelectionAfterDelete(sheet: Sheet, topicId: TopicId): TopicId | null {
@@ -199,12 +204,26 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    const [cloudError, setCloudError] = useState<string | null>(null);
    const urlNavigationHandled = useRef(false);
    const [notesPanelTopicId, setNotesPanelTopicId] = useState<TopicId | null>(null);
+   const [editTopicId, setEditTopicId] = useState<TopicId | null>(null);
+   const [editingTopicId, setEditingTopicId] = useState<TopicId | null>(null);
+   const activeProjectIdRef = useRef(activeProjectId);
+   activeProjectIdRef.current = activeProjectId;
    const notesCommitRef = useRef<(() => void) | null>(null);
    const [viewport, setViewport] = useState<ViewportState>(() => ({
       x: window.innerWidth / 2 - 64,
       y: window.innerHeight / 2,
       zoom: 1,
    }));
+   const [showNavHint, setShowNavHint] = useState(() => !isViewportNavHintDismissed());
+
+   const dismissNavHint = useCallback(() => {
+      setShowNavHint(false);
+      markViewportNavHintDismissed();
+   }, []);
+
+   const revealNavHint = useCallback(() => {
+      setShowNavHint(true);
+   }, []);
 
    useEffect(() => {
       if (!isCloud) return;
@@ -228,6 +247,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                setProjects([project]);
                setActiveProjectId(id);
                setSelectedTopicId(project.sheetsById[project.activeSheetId]!.rootTopicId);
+               revealNavHint();
                return;
             }
 
@@ -324,24 +344,65 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    const notesTopic =
       notesPanelTopicId != null && sheet ? sheet.topicsById[notesPanelTopicId] : undefined;
 
-   const updateActiveSheet = (recipe: (sheet: Sheet) => void) => {
-      setProjects((current) =>
-         current.map((project) => {
-            if (project.id !== activeProjectId) return project;
+   const updateActiveSheet = useCallback(
+      (recipe: (sheet: Sheet) => void) => {
+         setProjects((current) =>
+            current.map((project) => {
+               if (project.id !== activeProjectId) return project;
 
-            const activeSheet = project.sheetsById[project.activeSheetId];
-            if (!activeSheet) return project;
+               const activeSheet = project.sheetsById[project.activeSheetId];
+               if (!activeSheet) return project;
 
-            return {
-               ...project,
-               sheetsById: {
-                  ...project.sheetsById,
-                  [project.activeSheetId]: produce(activeSheet, recipe),
-               },
-            };
-         }),
-      );
-   };
+               return {
+                  ...project,
+                  sheetsById: {
+                     ...project.sheetsById,
+                     [project.activeSheetId]: produce(activeSheet, recipe),
+                  },
+               };
+            }),
+         );
+      },
+      [activeProjectId],
+   );
+
+   const insertTopicAndActivate = useCallback(
+      (recipe: (draft: Sheet, topicId: TopicId) => void, sourceTopicId: TopicId) => {
+         let insertedTopicId: TopicId | null = null;
+
+         flushSync(() => {
+            setProjects((current) =>
+               current.map((project) => {
+                  if (project.id !== activeProjectIdRef.current) return project;
+
+                  const activeSheet = project.sheetsById[project.activeSheetId];
+                  if (!activeSheet) return project;
+
+                  const nextSheet = produce(activeSheet, (draft) => {
+                     recipe(draft, sourceTopicId);
+                  });
+                  insertedTopicId = findInsertedTopicId(activeSheet, nextSheet);
+
+                  return {
+                     ...project,
+                     sheetsById: {
+                        ...project.sheetsById,
+                        [project.activeSheetId]: nextSheet,
+                     },
+                  };
+               }),
+            );
+
+            if (insertedTopicId) {
+               setSelectedTopicId(insertedTopicId);
+               setEditTopicId(insertedTopicId);
+            }
+         });
+
+         return insertedTopicId;
+      },
+      [],
+   );
 
    const selectMapTheme = (themeId: string) => {
       updateActiveSheet((draft) => {
@@ -356,27 +417,27 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    };
 
    const insertChildTopic = useCallback(
-      (topicId: TopicId, pendingText?: string) => {
-         let insertedTopicId: TopicId | null = null;
-         updateActiveSheet((draft) => {
-            if (pendingText !== undefined) applyPendingTopicText(draft, topicId, pendingText);
-            insertedTopicId = insertChildInDraft(draft, topicId, mapThemeId);
-         });
-         if (insertedTopicId) setSelectedTopicId(insertedTopicId);
+      (topicId: TopicId) => {
+         insertTopicAndActivate(
+            (draft, parentId) => {
+               insertChildInDraft(draft, parentId, mapThemeId);
+            },
+            topicId,
+         );
       },
-      [mapThemeId, activeProjectId],
+      [mapThemeId, insertTopicAndActivate],
    );
 
    const insertSiblingTopic = useCallback(
-      (topicId: TopicId, pendingText?: string) => {
-         let insertedTopicId: TopicId | null = null;
-         updateActiveSheet((draft) => {
-            if (pendingText !== undefined) applyPendingTopicText(draft, topicId, pendingText);
-            insertedTopicId = insertSiblingInDraft(draft, topicId, mapThemeId);
-         });
-         if (insertedTopicId) setSelectedTopicId(insertedTopicId);
+      (topicId: TopicId) => {
+         insertTopicAndActivate(
+            (draft, siblingId) => {
+               insertSiblingInDraft(draft, siblingId, mapThemeId);
+            },
+            topicId,
+         );
       },
-      [mapThemeId, activeProjectId],
+      [mapThemeId, insertTopicAndActivate],
    );
 
    const setZoom = useCallback((zoom: number) => {
@@ -399,7 +460,15 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
    useEffect(() => {
       const handleKeyDown = (event: KeyboardEvent) => {
-         if (!sheet || !selectedTopicId || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+         if (
+            !sheet ||
+            !selectedTopicId ||
+            editingTopicId ||
+            event.altKey ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.shiftKey
+         ) {
             return;
          }
 
@@ -457,7 +526,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-   }, [selectedTopicId, sheet, mapThemeId, insertChildTopic, insertSiblingTopic]);
+   }, [selectedTopicId, sheet, editingTopicId, insertChildTopic, insertSiblingTopic]);
 
    const toggleCollapse = (topicId: TopicId) => {
       updateActiveSheet((draft) => {
@@ -606,6 +675,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
          ),
       );
       setSelectedTopicId(newSheet.rootTopicId);
+      revealNavHint();
    };
 
    const createProject = async () => {
@@ -620,6 +690,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
          setProjects((current) => [...current, project]);
          setActiveProjectId(id);
          setSelectedTopicId(project.sheetsById[project.activeSheetId]!.rootTopicId);
+         revealNavHint();
          return;
       }
 
@@ -632,6 +703,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       setProjects((current) => [...current, project]);
       setActiveProjectId(projectId);
       setSelectedTopicId(newSheet.rootTopicId);
+      revealNavHint();
    };
 
    if (cloudLoading) {
@@ -669,6 +741,12 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                activeProjectId={activeProjectId}
                onSelectProject={selectProject}
                onCreateProject={createProject}
+               onInsertSibling={() => {
+                  if (selectedTopicId) insertSiblingTopic(selectedTopicId);
+               }}
+               onInsertChild={() => {
+                  if (selectedTopicId) insertChildTopic(selectedTopicId);
+               }}
                onAddContent={openNotesPanel}
                onAddComment={() => {}}
             />
@@ -677,6 +755,8 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                showCanvasDots={canvasDotsEnabled}
                viewport={viewport}
                onViewportChange={setViewport}
+               showNavHint={showNavHint}
+               onDismissNavHint={dismissNavHint}
                onClearSelection={() => {
                   dismissNotesPanel();
                   setSelectedTopicId(null);
@@ -698,6 +778,9 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                <MindMapCanvas
                   sheet={sheet}
                   selectedTopicId={selectedTopicId}
+                  editTopicId={editTopicId}
+                  onEditTopicIdConsumed={() => setEditTopicId(null)}
+                  onEditingTopicChange={setEditingTopicId}
                   themeId={mapThemeId}
                   onSelectTopic={(topicId) => {
                      if (notesPanelTopicId && notesPanelTopicId !== topicId) {
@@ -706,8 +789,6 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                      setSelectedTopicId(topicId);
                   }}
                   onTopicTextChange={updateTopicText}
-                  onInsertChild={insertChildTopic}
-                  onInsertSibling={insertSiblingTopic}
                   onOpenNotesPanel={openNotesPanelFor}
                   onToggleCollapse={toggleCollapse}
                />
