@@ -104,6 +104,10 @@ function SheetTab({
         aria-label={`Options for ${sheet.title}`}
         aria-expanded={menuOpen}
         aria-haspopup="menu"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
         onClick={(event) => {
           event.stopPropagation();
           if (menuOpen) onCloseMenu();

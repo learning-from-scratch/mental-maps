@@ -4,21 +4,23 @@ import {
   ExternalLink,
   Globe,
   ImagePlus,
+  MessageSquare,
   Paperclip,
   Sigma,
   SquarePen,
   Sticker,
   Tag,
 } from 'lucide-react';
-import { useEffect, useRef, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { appIcon } from '@/view/icons';
 
 interface InsertMenuProps {
   open: boolean;
-  onClose: () => void;
+  hasSelection: boolean;
   linkSubmenuOpen: boolean;
   onLinkHover: (open: boolean) => void;
   onNote?: () => void;
+  onComment?: () => void;
 }
 
 interface MenuItem {
@@ -30,17 +32,12 @@ interface MenuItem {
 
 const insertIcon = (className = 'insert-menu__svg') => appIcon(className);
 
-const MENU_SECTIONS: MenuItem[][] = [
-  [
-    { id: 'note', label: 'Note', icon: <SquarePen {...insertIcon()} /> },
-    { id: 'label', label: 'Label', icon: <Tag {...insertIcon()} /> },
-    {
-      id: 'link',
-      label: 'Link',
-      icon: <ExternalLink {...insertIcon()} />,
-      hasSubmenu: true,
-    },
-  ],
+const LINK_ITEMS: MenuItem[] = [
+  { id: 'webpage', label: 'Webpage', icon: <Globe {...insertIcon()} /> },
+  { id: 'topic', label: 'Topic', icon: <Bookmark {...insertIcon()} /> },
+];
+
+const OTHER_SECTIONS: MenuItem[][] = [
   [{ id: 'attachment', label: 'Attachment', icon: <Paperclip {...insertIcon()} /> }],
   [
     { id: 'sticker', label: 'Sticker', icon: <Sticker {...insertIcon()} /> },
@@ -49,10 +46,25 @@ const MENU_SECTIONS: MenuItem[][] = [
   ],
 ];
 
-const LINK_ITEMS: MenuItem[] = [
-  { id: 'webpage', label: 'Webpage', icon: <Globe {...insertIcon()} /> },
-  { id: 'topic', label: 'Topic', icon: <Bookmark {...insertIcon()} /> },
-];
+function buildFirstSection(hasSelection: boolean): MenuItem[] {
+  const section: MenuItem[] = [
+    { id: 'note', label: 'Note', icon: <SquarePen {...insertIcon()} /> },
+    { id: 'label', label: 'Label', icon: <Tag {...insertIcon()} /> },
+  ];
+
+  if (!hasSelection) {
+    section.push({ id: 'comment', label: 'Comment', icon: <MessageSquare {...insertIcon()} /> });
+  }
+
+  section.push({
+    id: 'link',
+    label: 'Link',
+    icon: <ExternalLink {...insertIcon()} />,
+    hasSubmenu: true,
+  });
+
+  return section;
+}
 
 function MenuRow({ item }: { item: MenuItem }) {
   return (
@@ -66,62 +78,61 @@ function MenuRow({ item }: { item: MenuItem }) {
   );
 }
 
+function isItemDisabled(itemId: string, hasSelection: boolean): boolean {
+  if (itemId === 'comment') return false;
+  return !hasSelection;
+}
+
 export function InsertMenu({
   open,
-  onClose,
+  hasSelection,
   linkSubmenuOpen,
   onLinkHover,
   onNote,
+  onComment,
 }: InsertMenuProps) {
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-
-    const onPointerDown = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
-        onClose();
-      }
-    };
-
-    window.addEventListener('pointerdown', onPointerDown);
-    return () => window.removeEventListener('pointerdown', onPointerDown);
-  }, [open, onClose]);
-
   const handleItemClick = (itemId: string) => {
+    if (isItemDisabled(itemId, hasSelection)) return;
+
     if (itemId === 'note') {
       onNote?.();
-      onClose();
+      return;
+    }
+
+    if (itemId === 'comment') {
+      onComment?.();
     }
   };
 
   if (!open) return null;
 
+  const sections = [buildFirstSection(hasSelection), ...OTHER_SECTIONS];
+
   return (
-    <div className="insert-menu" ref={menuRef}>
-      {MENU_SECTIONS.map((section, sectionIndex) => (
+    <div className="insert-menu insert-menu--anchored">
+      {sections.map((section, sectionIndex) => (
         <div key={sectionIndex} className="insert-menu__section">
           {section.map((item) =>
             item.hasSubmenu ? (
               <div
                 key={item.id}
                 className="insert-menu__submenu-wrap"
-                onMouseEnter={() => onLinkHover(true)}
+                onMouseEnter={() => {
+                  if (!isItemDisabled(item.id, hasSelection)) onLinkHover(true);
+                }}
                 onMouseLeave={() => onLinkHover(false)}
               >
                 <div
-                  className={`insert-menu__item ${linkSubmenuOpen ? 'insert-menu__item--active' : ''}`}
+                  className={`insert-menu__item${
+                    linkSubmenuOpen ? ' insert-menu__item--active' : ''
+                  }${isItemDisabled(item.id, hasSelection) ? ' insert-menu__item--disabled' : ''}`}
                 >
                   <MenuRow item={item} />
                 </div>
-                {linkSubmenuOpen && (
+                {linkSubmenuOpen && !isItemDisabled(item.id, hasSelection) && (
                   <div className="insert-menu__submenu">
                     {LINK_ITEMS.map((linkItem) => (
-                      <button
-                        key={linkItem.id}
-                        type="button"
-                        className="insert-menu__submenu-item"
-                      >
+                      <button key={linkItem.id} type="button" className="insert-menu__submenu-item">
                         <MenuRow item={linkItem} />
                       </button>
                     ))}
@@ -132,7 +143,10 @@ export function InsertMenu({
               <button
                 key={item.id}
                 type="button"
-                className="insert-menu__item insert-menu__item--button"
+                className={`insert-menu__item insert-menu__item--button${
+                  isItemDisabled(item.id, hasSelection) ? ' insert-menu__item--disabled' : ''
+                }`}
+                disabled={isItemDisabled(item.id, hasSelection)}
                 onClick={() => handleItemClick(item.id)}
               >
                 <MenuRow item={item} />

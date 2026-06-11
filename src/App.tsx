@@ -16,7 +16,7 @@ import {
    DEFAULT_MAP_THEME_ID,
    branchColorForIndex,
    getMapCanvasStyle,
-   setActiveMapTheme,
+   resolveSheetThemeId,
 } from '@/layout/theme';
 import { layoutSheet } from '@/layout';
 import { createMap, listMaps, loadMap, saveMap } from '@/persistence/maps';
@@ -101,20 +101,11 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    const urlNavigationHandled = useRef(false);
    const [notesPanelTopicId, setNotesPanelTopicId] = useState<TopicId | null>(null);
    const notesCommitRef = useRef<(() => void) | null>(null);
-   const [mapThemeId, setMapThemeId] = useState(DEFAULT_MAP_THEME_ID);
-   const [canvasDotsEnabled, setCanvasDotsEnabled] = useState(true);
    const [viewport, setViewport] = useState<ViewportState>(() => ({
       x: window.innerWidth / 2 - 64,
       y: window.innerHeight / 2,
       zoom: 1,
    }));
-
-   const selectMapTheme = (themeId: string) => {
-      setActiveMapTheme(themeId);
-      setMapThemeId(themeId);
-   };
-
-   const canvasStyle = useMemo(() => getMapCanvasStyle(mapThemeId), [mapThemeId]);
 
    useEffect(() => {
       if (!isCloud) return;
@@ -196,6 +187,10 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
    const activeProject = projects.find((project) => project.id === activeProjectId) ?? projects[0];
    const sheet = activeProject?.sheetsById[activeProject.activeSheetId];
+   const mapThemeId = sheet ? resolveSheetThemeId(sheet.theme) : DEFAULT_MAP_THEME_ID;
+   const canvasDotsEnabled = sheet?.canvasDotsEnabled ?? true;
+
+   const canvasStyle = useMemo(() => getMapCanvasStyle(mapThemeId), [mapThemeId]);
 
    const saveStatus = useDebouncedSave(
       activeProject,
@@ -247,6 +242,18 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             };
          }),
       );
+   };
+
+   const selectMapTheme = (themeId: string) => {
+      updateActiveSheet((draft) => {
+         draft.theme = themeId;
+      });
+   };
+
+   const handleCanvasDotsChange = (enabled: boolean) => {
+      updateActiveSheet((draft) => {
+         draft.canvasDotsEnabled = enabled;
+      });
    };
 
    const setZoom = useCallback((zoom: number) => {
@@ -324,7 +331,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
             const root = draft.topicsById[draft.rootTopicId];
             const nextRootBranchColor = () =>
-               branchColorForIndex(root?.childrenIds.length ?? 0);
+               branchColorForIndex(root?.childrenIds.length ?? 0, mapThemeId);
             const applyRootBranchColor = (topicId: TopicId, color: string) => {
                const topic = draft.topicsById[topicId];
                if (!topic) return;
@@ -400,7 +407,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-   }, [selectedTopicId, sheet]);
+   }, [selectedTopicId, sheet, mapThemeId]);
 
    const toggleCollapse = (topicId: TopicId) => {
       updateActiveSheet((draft) => {
@@ -613,6 +620,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                onSelectProject={selectProject}
                onCreateProject={createProject}
                onAddContent={openNotesPanel}
+               onAddComment={() => {}}
             />
             <Viewport
                canvasStyle={canvasStyle}
@@ -655,7 +663,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             <ThemeSidebar
                activeThemeId={mapThemeId}
                canvasDotsEnabled={canvasDotsEnabled}
-               onCanvasDotsChange={setCanvasDotsEnabled}
+               onCanvasDotsChange={handleCanvasDotsChange}
                onSelectTheme={selectMapTheme}
             />
             <BottomPanel

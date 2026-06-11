@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { Sheet, TopicId } from '@/core/model/types';
 import { collectDescendantIds } from '@/core/commands/tree';
 import { layoutSheet } from '@/layout';
+import { DEFAULT_MAP_THEME_ID } from '@/layout/theme';
 import { EdgeLayer } from '@/view/edge/EdgeLayer';
 import { CollapseHandle } from '@/view/topic/CollapseHandle';
 import { TopicView } from '@/view/topic/TopicView';
@@ -20,14 +21,37 @@ interface MindMapCanvasProps {
 export function MindMapCanvas({
   sheet,
   selectedTopicId,
-  themeId,
+  themeId = DEFAULT_MAP_THEME_ID,
   onSelectTopic,
   onTopicTextChange,
   onOpenNotesPanel,
   onToggleCollapse,
 }: MindMapCanvasProps) {
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- themeId changes the active palette used inside layoutSheet
-  const layout = useMemo(() => layoutSheet(sheet), [sheet, themeId]);
+  const [liveEdit, setLiveEdit] = useState<{ topicId: TopicId; text: string } | null>(null);
+
+  const handleLiveTextChange = useCallback((topicId: TopicId, text: string | null) => {
+    setLiveEdit(text === null ? null : { topicId, text });
+  }, []);
+
+  const layoutSheetInput = useMemo(() => {
+    if (!liveEdit) return sheet;
+
+    const topic = sheet.topicsById[liveEdit.topicId];
+    if (!topic) return sheet;
+
+    return {
+      ...sheet,
+      topicsById: {
+        ...sheet.topicsById,
+        [liveEdit.topicId]: { ...topic, text: liveEdit.text },
+      },
+    };
+  }, [sheet, liveEdit]);
+
+  const layout = useMemo(
+    () => layoutSheet(layoutSheetInput, liveEdit?.topicId, themeId),
+    [layoutSheetInput, themeId, liveEdit?.topicId],
+  );
 
   const topicNodes = useMemo(
     () => Array.from(layout.nodes.entries()),
@@ -85,9 +109,11 @@ export function MindMapCanvas({
             text={sheet.topicsById[topicId]?.text ?? ''}
             notes={sheet.topicsById[topicId]?.notes}
             layout={nodeLayout}
+            themeId={themeId}
             selected={topicId === selectedTopicId}
             onSelect={onSelectTopic}
             onTextChange={onTopicTextChange}
+            onLiveTextChange={handleLiveTextChange}
             onOpenNotes={onOpenNotesPanel}
           />
         ))}
@@ -102,6 +128,7 @@ export function MindMapCanvas({
             width={nodeLayout.width}
             height={nodeLayout.height}
             branchIndex={nodeLayout.branchIndex}
+            themeId={themeId}
             onToggle={() => onToggleCollapse(topicId)}
           />
         ))}

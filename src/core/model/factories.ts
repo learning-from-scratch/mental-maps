@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid';
+import { DEFAULT_MAP_THEME_ID } from '@/layout/theme';
 import type {
   LayoutConfig,
   MindMapDocument,
@@ -45,7 +46,8 @@ export function createSheet(
     relationships: [],
     boundaries: [],
     summaries: [],
-    theme: 'default',
+    theme: DEFAULT_MAP_THEME_ID,
+    canvasDotsEnabled: true,
     layout: DEFAULT_LAYOUT,
     ...rest,
   };

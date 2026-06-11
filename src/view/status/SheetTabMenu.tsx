@@ -1,4 +1,5 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import type { SheetId } from '@/core/model/types';
 
 interface SheetTabMenuProps {
@@ -23,16 +24,48 @@ export function SheetTabMenu({
   onClose,
 }: SheetTabMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
 
-  useEffect(() => {
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (menuRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
-      onClose();
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+
+    const updatePosition = () => {
+      const rect = anchor.getBoundingClientRect();
+      setPosition({
+        left: rect.left,
+        top: rect.top - 8,
+      });
     };
 
-    window.addEventListener('pointerdown', handlePointerDown);
-    return () => window.removeEventListener('pointerdown', handlePointerDown);
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [anchorRef]);
+
+  useEffect(() => {
+    let removeListener: (() => void) | undefined;
+
+    const timer = window.setTimeout(() => {
+      const handlePointerDown = (event: PointerEvent) => {
+        const target = event.target as Node;
+        if (menuRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
+        onClose();
+      };
+
+      window.addEventListener('pointerdown', handlePointerDown);
+      removeListener = () => window.removeEventListener('pointerdown', handlePointerDown);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      removeListener?.();
+    };
   }, [anchorRef, onClose]);
 
   useEffect(() => {
@@ -44,8 +77,18 @@ export function SheetTabMenu({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  return (
-    <div ref={menuRef} className="sheet-tab-menu" role="menu">
+  if (!position) return null;
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className="sheet-tab-menu"
+      role="menu"
+      style={{
+        left: position.left,
+        top: position.top,
+      }}
+    >
       <button
         type="button"
         className="sheet-tab-menu__item"
@@ -94,6 +137,7 @@ export function SheetTabMenu({
       >
         Delete
       </button>
-    </div>
+    </div>,
+    document.body,
   );
 }

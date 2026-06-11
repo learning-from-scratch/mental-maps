@@ -77,6 +77,7 @@ export interface Sheet {
   boundaries: Boundary[];
   summaries: Summary[];
   theme: ThemeRef;
+  canvasDotsEnabled?: boolean;
   layout: LayoutConfig;
 }
 

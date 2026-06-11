@@ -1,19 +1,10 @@
-import {
-  ArrowRightToLine,
-  Braces,
-  ChevronDown,
-  ChevronRight,
-  Home,
-  ListTree,
-  Menu,
-  Plus,
-  SquareDashed,
-  Waypoints,
-} from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight, Home, Menu } from 'lucide-react';
+import { Fragment, useState, type ReactNode } from 'react';
 import type { TopicId } from '@/core/model/types';
 import { appIcon } from '@/view/icons';
-import { InsertMenu } from './InsertMenu';
+import { MindMapIcons } from '@/view/icons/mindMapIcons';
+import { InsertContentButton } from './InsertContentButton';
+import { ToolbarTooltip } from './ToolbarTooltip';
 
 export interface ProjectSummary {
   id: string;
@@ -27,68 +18,48 @@ interface FloatingToolbarProps {
   onSelectProject: (projectId: string) => void;
   onCreateProject: () => void;
   onAddContent: () => void;
+  onAddComment: () => void;
 }
 
 interface ToolbarButton {
   id: string;
   icon: ReactNode;
-  label: string;
+  title: string;
+  description: string;
   shortcut?: string;
   disabled?: boolean;
-  isInsertMenu?: boolean;
   onClick?: () => void;
 }
 
 function ToolbarButtonItem({
   button,
   hoveredId,
-  insertOpen,
   onHover,
-  onInsertToggle,
-  onInsertClose,
-  linkSubmenuOpen,
-  onLinkHover,
-  onAddContent,
 }: {
   button: ToolbarButton;
   hoveredId: string | null;
-  insertOpen: boolean;
   onHover: (id: string | null) => void;
-  onInsertToggle: () => void;
-  onInsertClose: () => void;
-  linkSubmenuOpen: boolean;
-  onLinkHover: (open: boolean) => void;
-  onAddContent: () => void;
 }) {
   return (
-    <div className="floating-toolbar__item-wrap">
+    <div
+      className="floating-toolbar__item-wrap"
+      onMouseEnter={() => onHover(button.id)}
+      onMouseLeave={() => onHover(null)}
+    >
       <button
         type="button"
-        className={`toolbar__button ${button.disabled ? 'toolbar__button--disabled' : ''} ${insertOpen && button.isInsertMenu ? 'toolbar__button--active' : ''}`}
+        className={`toolbar__button ${button.disabled ? 'toolbar__button--disabled' : ''}`}
         disabled={button.disabled}
-        aria-label={button.label}
-        onMouseEnter={() => onHover(button.id)}
-        onMouseLeave={() => onHover(null)}
-        onClick={() => {
-          if (button.isInsertMenu) onInsertToggle();
-          else button.onClick?.();
-        }}
+        aria-label={button.description}
+        onClick={() => button.onClick?.()}
       >
         {button.icon}
       </button>
-      {hoveredId === button.id && !button.disabled && (
-        <div className="toolbar__tooltip" role="tooltip">
-          <span>{button.label}</span>
-          {button.shortcut && <kbd className="toolbar__shortcut">{button.shortcut}</kbd>}
-        </div>
-      )}
-      {button.isInsertMenu && (
-        <InsertMenu
-          open={insertOpen}
-          onClose={onInsertClose}
-          linkSubmenuOpen={linkSubmenuOpen}
-          onLinkHover={onLinkHover}
-          onNote={onAddContent}
+      {hoveredId === button.id && (
+        <ToolbarTooltip
+          title={button.title}
+          description={button.description}
+          shortcut={button.shortcut}
         />
       )}
     </div>
@@ -179,10 +150,9 @@ export function FloatingToolbar({
   onSelectProject,
   onCreateProject,
   onAddContent,
+  onAddComment,
 }: FloatingToolbarProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [insertOpen, setInsertOpen] = useState(false);
-  const [linkSubmenuOpen, setLinkSubmenuOpen] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
 
   const hasSelection = selectedTopicId !== null;
@@ -191,55 +161,44 @@ export function FloatingToolbar({
   const buttons: ToolbarButton[] = [
     {
       id: 'add-subtopic',
-      icon: <ListTree {...appIcon('toolbar__icon')} />,
-      label: 'Add subtopic',
-      shortcut: 'Tab',
+      icon: <MindMapIcons.Topic className="toolbar__icon" />,
+      title: 'Topic',
+      shortcut: 'Enter',
+      description: 'Add a topic after a selected topic',
       disabled: !hasSelection,
     },
     {
       id: 'add-sibling',
-      icon: <ArrowRightToLine {...appIcon('toolbar__icon')} />,
-      label: 'Add topic after the selected topic',
-      shortcut: 'Enter',
+      icon: <MindMapIcons.Subtopic className="toolbar__icon" />,
+      title: 'Subtopic',
+      shortcut: 'Tab',
+      description: 'Add a child topic to the selected topic',
       disabled: !hasSelection,
     },
     {
       id: 'relationship',
-      icon: <Waypoints {...appIcon('toolbar__icon')} />,
-      label: 'Add relationship',
-      disabled: !canUseStructureTools,
+      icon: <MindMapIcons.Relationship className="toolbar__icon" />,
+      title: 'Relationship',
+      shortcut: 'Ctrl Shift R',
+      description: 'Create a relationship between the two topics',
+      disabled: hasSelection && !canUseStructureTools,
     },
     {
       id: 'summary',
-      icon: <Braces {...appIcon('toolbar__icon')} />,
-      label: 'Add summary',
-      disabled: !canUseStructureTools,
+      icon: <MindMapIcons.Summary className="toolbar__icon" />,
+      title: 'Summary',
+      description: 'Add a summary to the selected topics',
+      disabled: !hasSelection || !canUseStructureTools,
     },
     {
       id: 'boundary',
-      icon: <SquareDashed {...appIcon('toolbar__icon')} />,
-      label: 'Add boundary',
-      disabled: !canUseStructureTools,
-    },
-    {
-      id: 'insert-plus',
-      icon: <Plus {...appIcon('toolbar__icon')} />,
-      label: 'Add content',
-      disabled: !hasSelection,
-      onClick: onAddContent,
-    },
-    {
-      id: 'insert-menu',
-      icon: <ChevronDown {...appIcon('toolbar__icon')} />,
-      label: 'Insert / Add content',
-      isInsertMenu: true,
+      icon: <MindMapIcons.Boundary className="toolbar__icon" />,
+      title: 'Boundary',
+      shortcut: 'Ctrl Shift B',
+      description: 'Group the selected topics with boundary',
+      disabled: !hasSelection || !canUseStructureTools,
     },
   ];
-
-  const closeInsert = () => {
-    setInsertOpen(false);
-    setLinkSubmenuOpen(false);
-  };
 
   return (
     <div className="floating-toolbar-wrap" role="toolbar" aria-label="Mind map tools">
@@ -253,20 +212,21 @@ export function FloatingToolbar({
         onCreateProject={onCreateProject}
       />
       <div className="floating-toolbar" aria-label="Topic editing tools">
-        {buttons.map((button) => (
-          <ToolbarButtonItem
-            key={button.id}
-            button={button}
-            hoveredId={hoveredId}
-            insertOpen={insertOpen}
-            onHover={setHoveredId}
-            onInsertToggle={() => setInsertOpen((open) => !open)}
-            onInsertClose={closeInsert}
-            linkSubmenuOpen={linkSubmenuOpen}
-            onLinkHover={setLinkSubmenuOpen}
-            onAddContent={onAddContent}
-          />
+        {buttons.map((button, index) => (
+          <Fragment key={button.id}>
+            {index === 2 && <div className="floating-toolbar__separator" aria-hidden="true" />}
+            <ToolbarButtonItem
+              button={button}
+              hoveredId={hoveredId}
+              onHover={setHoveredId}
+            />
+          </Fragment>
         ))}
+        <InsertContentButton
+          hasSelection={hasSelection}
+          onAddNote={onAddContent}
+          onAddComment={onAddComment}
+        />
       </div>
     </div>
   );

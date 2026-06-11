@@ -124,6 +124,20 @@ export const MAP_THEMES: MapTheme[] = [
 
 export const DEFAULT_MAP_THEME_ID = 'classic';
 
+const LEGACY_SHEET_THEME_IDS: Record<string, string> = {
+  default: DEFAULT_MAP_THEME_ID,
+  colorful: DEFAULT_MAP_THEME_ID,
+};
+
+/** Resolve a sheet's theme ref to a known map theme id. */
+export function resolveSheetThemeId(
+  themeRef: string,
+  fallback: string = DEFAULT_MAP_THEME_ID,
+): string {
+  const candidate = LEGACY_SHEET_THEME_IDS[themeRef] ?? themeRef;
+  return MAP_THEMES.some((theme) => theme.id === candidate) ? candidate : fallback;
+}
+
 function mixHexChannel(channel: number, target: number, ratio: number): string {
   return Math.round(channel + (target - channel) * ratio)
     .toString(16)
@@ -163,22 +177,34 @@ function buildPalette(colors: string[]): BranchTheme[] {
 
 export const BRANCH_PALETTE: BranchTheme[] = buildPalette(MAP_THEMES[0]!.colors);
 
-let activePalette: BranchTheme[] = BRANCH_PALETTE;
+const paletteCache = new Map<string, BranchTheme[]>();
 
-export function setActiveMapTheme(themeId: string): void {
+function paletteForTheme(themeId: string): BranchTheme[] {
+  const cached = paletteCache.get(themeId);
+  if (cached) return cached;
+
   const theme = MAP_THEMES.find((candidate) => candidate.id === themeId);
-  activePalette = theme ? buildPalette(theme.colors) : BRANCH_PALETTE;
+  const palette = theme ? buildPalette(theme.colors) : BRANCH_PALETTE;
+  paletteCache.set(themeId, palette);
+  return palette;
 }
 
-export function getBranchTheme(branchIndex: number): BranchTheme {
+export function getBranchTheme(
+  branchIndex: number,
+  themeId: string = DEFAULT_MAP_THEME_ID,
+): BranchTheme {
   if (branchIndex < 0) {
     return { color: '#2d2d2d', light: '#ffffff', textOnMain: '#2d2d2d' };
   }
-  return activePalette[branchIndex % activePalette.length]!;
+  const palette = paletteForTheme(themeId);
+  return palette[branchIndex % palette.length]!;
 }
 
-export function branchColorForIndex(index: number): string {
-  return getBranchTheme(index).color;
+export function branchColorForIndex(
+  index: number,
+  themeId: string = DEFAULT_MAP_THEME_ID,
+): string {
+  return getBranchTheme(index, themeId).color;
 }
 
 const DEFAULT_CANVAS: MapCanvasStyle = MAP_THEMES[0]!.canvas;

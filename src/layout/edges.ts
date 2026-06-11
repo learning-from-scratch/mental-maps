@@ -1,5 +1,5 @@
 import type { NodeLayout } from './types';
-import { getBranchTheme } from './theme';
+import { DEFAULT_MAP_THEME_ID, getBranchTheme } from './theme';
 
 const BEZIER_CONTROL_RATIO = 0.45;
 /** Distance from parent outer edge to the far side of the collapse handle. */
@@ -216,8 +216,11 @@ export function rootEdgePath(
   );
 }
 
-export function branchColor(branchIndex: number): string {
-  return getBranchTheme(branchIndex).color;
+export function branchColor(
+  branchIndex: number,
+  themeId: string = DEFAULT_MAP_THEME_ID,
+): string {
+  return getBranchTheme(branchIndex, themeId).color;
 }
 
 function bracketFilletRadius(
@@ -345,10 +348,11 @@ export function bracketEdges(
   parent: NodeLayout,
   children: NodeLayout[],
   branchIndex: number,
+  themeId: string = DEFAULT_MAP_THEME_ID,
 ): BracketEdge[] {
   if (children.length === 0) return [];
 
-  const color = branchColor(branchIndex);
+  const color = branchColor(branchIndex, themeId);
   const strokeWidth = 2;
   const {
     onLeft,

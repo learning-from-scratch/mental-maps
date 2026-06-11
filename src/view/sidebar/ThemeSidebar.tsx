@@ -1,5 +1,5 @@
 import { Palette } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MAP_THEMES } from '@/layout/theme';
 import { appIcon } from '@/view/icons';
 
@@ -17,9 +17,23 @@ export function ThemeSidebar({
   onSelectTheme,
 }: ThemeSidebarProps) {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [open]);
 
   return (
-    <div className="theme-sidebar">
+    <div ref={rootRef} className="theme-sidebar">
       <button
         type="button"
         className={`theme-sidebar__toggle${open ? ' theme-sidebar__toggle--active' : ''}`}
@@ -32,11 +46,7 @@ export function ThemeSidebar({
       </button>
       {open && (
         <aside className="theme-sidebar__panel" aria-label="Map color themes">
-          <div
-            className="theme-sidebar__dots-toggle"
-            role="group"
-            aria-label="Dotted background"
-          >
+          <div className="theme-sidebar__dots-toggle" role="group" aria-label="Dotted background">
             <span className="theme-sidebar__dots-label">Dotted background</span>
             <button
               type="button"

@@ -1,8 +1,17 @@
 import { AlignLeft } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react';
 import { topicHasNotes } from '@/core/model/notes';
 import type { TopicId } from '@/core/model/types';
-import { getBranchTheme } from '@/layout/theme';
+import { horizontalPadForDepth, measureTopicForEdit } from '@/layout/measure';
+import { DEFAULT_MAP_THEME_ID, getBranchTheme } from '@/layout/theme';
 import type { NodeLayout } from '@/layout/types';
 import { appIcon } from '@/view/icons';
 
@@ -11,9 +20,11 @@ interface TopicViewProps {
   text: string;
   notes?: string;
   layout: NodeLayout;
+  themeId?: string;
   selected?: boolean;
   onSelect?: (topicId: TopicId) => void;
   onTextChange?: (topicId: TopicId, text: string) => void;
+  onLiveTextChange?: (topicId: TopicId, text: string | null) => void;
   onOpenNotes?: (topicId: TopicId) => void;
 }
 
@@ -22,13 +33,16 @@ export function TopicView({
   text,
   notes,
   layout,
+  themeId = DEFAULT_MAP_THEME_ID,
   selected = false,
   onSelect,
   onTextChange,
+  onLiveTextChange,
   onOpenNotes,
 }: TopicViewProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [draftText, setDraftText] = useState(text);
+  const [editWidthExtra, setEditWidthExtra] = useState(0);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const draftTextRef = useRef(draftText);
   draftTextRef.current = draftText;
@@ -47,11 +61,20 @@ export function TopicView({
   }, [text, isEditing]);
 
   useEffect(() => {
+    if (!isEditing) {
+      onLiveTextChange?.(topicId, null);
+      return;
+    }
+    onLiveTextChange?.(topicId, draftText);
+  }, [isEditing, draftText, topicId, onLiveTextChange]);
+
+  useLayoutEffect(() => {
     if (!isEditing) return;
     const editor = editorRef.current;
     if (!editor) return;
     editor.focus();
-    editor.select();
+    const end = editor.value.length;
+    editor.setSelectionRange(end, end);
   }, [isEditing]);
 
   useEffect(() => {
@@ -99,7 +122,7 @@ export function TopicView({
   const isMain = layout.depth === 1;
   const isLevel2 = layout.depth === 2;
   const isDeepChild = layout.depth >= 3;
-  const branch = getBranchTheme(layout.branchIndex);
+  const branch = getBranchTheme(layout.branchIndex, themeId);
 
   const className = [
     'topic-view',
@@ -117,13 +140,47 @@ export function TopicView({
     setIsEditing(false);
   };
 
+  const editMeasurement = useMemo(() => {
+    if (!isEditing) return null;
+    return measureTopicForEdit(draftText, layout.depth, undefined);
+  }, [isEditing, draftText, layout.depth]);
+
+  const measuredEditWidth = editMeasurement?.width ?? layout.width;
+  const boxWidth = measuredEditWidth + editWidthExtra;
+  const boxHeight = editMeasurement?.height ?? layout.height;
+  const boxLineHeight = editMeasurement?.lineHeight ?? layout.lineHeight;
+  const isSingleLineEdit =
+    isEditing && (editMeasurement?.lines.length ?? 1) === 1 && !draftText.includes('\n');
+
+  useLayoutEffect(() => {
+    if (!isEditing) {
+      setEditWidthExtra(0);
+      return;
+    }
+
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    editor.scrollLeft = 0;
+    editor.scrollTop = 0;
+
+    const padX = horizontalPadForDepth(layout.depth);
+    const neededOuter = editor.scrollWidth + padX * 2;
+    setEditWidthExtra(Math.max(0, neededOuter - measuredEditWidth));
+
+    if (!isSingleLineEdit) {
+      editor.style.height = 'auto';
+      editor.style.height = `${editor.scrollHeight}px`;
+    }
+  }, [isEditing, isSingleLineEdit, draftText, measuredEditWidth, boxHeight, layout.depth]);
+
   const style: CSSProperties = {
     left: layout.x,
     top: layout.y,
-    width: layout.width,
-    height: layout.height,
+    width: boxWidth,
+    height: boxHeight,
     fontSize: layout.fontSize,
-    lineHeight: `${layout.lineHeight}px`,
+    lineHeight: `${boxLineHeight}px`,
     ...(isMain
       ? {
           backgroundColor: branch.color,
@@ -161,7 +218,7 @@ export function TopicView({
 
   return (
     <div
-      className={className}
+      className={`${className}${isEditing ? ' topic-view--editing' : ''}`}
       style={style}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => {
@@ -169,13 +226,16 @@ export function TopicView({
         if (!isEditing) onSelect?.(topicId);
       }}
     >
-      <div className="topic-view__content">
+      <div className={`topic-view__content${isEditing ? ' topic-view__content--editing' : ''}`}>
         {isEditing ? (
           <textarea
             ref={editorRef}
-            className="topic-view__editor"
+            className={`topic-view__editor${
+              isSingleLineEdit ? ' topic-view__editor--single-line' : ''
+            }`}
             value={draftText}
-            rows={layout.lines.length}
+            rows={isSingleLineEdit ? 1 : Math.max(editMeasurement?.lines.length ?? 1, 1)}
+            wrap={isSingleLineEdit ? 'off' : 'soft'}
             onChange={(event) => setDraftText(event.target.value)}
             onBlur={commitEdit}
             onKeyDown={(event) => {

@@ -1,4 +1,5 @@
 import type { Sheet, Topic, TopicId } from '@/core/model/types';
+import { DEFAULT_MAP_THEME_ID } from './theme';
 import { bracketChildGap, bracketEdges, branchColor, rootEdgePath } from './edges';
 import type { Point, RootFanRoute, RootSide } from './edges';
 import { getVisibleChildren, measureSheet } from './measure';
@@ -318,6 +319,7 @@ function computeBounds(nodes: Map<TopicId, NodeLayout>): Rect {
 function buildEdges(
   sheet: Sheet,
   nodes: Map<TopicId, NodeLayout>,
+  themeId: string,
 ): EdgeLayout[] {
   const edges: EdgeLayout[] = [];
 
@@ -439,7 +441,7 @@ function buildEdges(
         edges.push({
           id: `edge-${topic.id}-${childId ?? `${childLayout.x}-${childLayout.y}`}`,
           path: rootEdgePath(parentLayout, childLayout, anchor?.source, anchor?.route),
-          color: branchColor(childLayout.branchIndex),
+          color: branchColor(childLayout.branchIndex, themeId),
           strokeWidth: 2,
           fromId: topic.id,
           toId: childId,
@@ -455,6 +457,7 @@ function buildEdges(
         parentLayout,
         childLayouts,
         childLayouts[0]!.branchIndex,
+        themeId,
       ).map((edge) => ({
         ...edge,
         fromId: topic.id,
@@ -465,9 +468,13 @@ function buildEdges(
   return edges;
 }
 
-export function layoutMindmap(sheet: Sheet): LayoutResult {
+export function layoutMindmap(
+  sheet: Sheet,
+  editingTopicId?: TopicId,
+  themeId: string = DEFAULT_MAP_THEME_ID,
+): LayoutResult {
   const depths = computeDepths(sheet);
-  const measurements = measureSheet(sheet, depths);
+  const measurements = measureSheet(sheet, depths, editingTopicId);
 
   assignSides(sheet, measurements);
 
@@ -569,7 +576,7 @@ export function layoutMindmap(sheet: Sheet): LayoutResult {
     layoutFloatingTree(sheet, floatingId, measurements, nodes, branchIndices);
   }
 
-  const edges = buildEdges(sheet, nodes);
+  const edges = buildEdges(sheet, nodes, themeId);
   const bounds = computeBounds(nodes);
 
   return { nodes, edges, bounds };

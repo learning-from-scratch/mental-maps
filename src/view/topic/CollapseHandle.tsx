@@ -1,5 +1,5 @@
 import type { NodeSide } from '@/layout/types';
-import { getBranchTheme } from '@/layout/theme';
+import { DEFAULT_MAP_THEME_ID, getBranchTheme } from '@/layout/theme';
 
 interface CollapseHandleProps {
    collapsed: boolean;
@@ -10,6 +10,7 @@ interface CollapseHandleProps {
    width: number;
    height: number;
    branchIndex: number;
+   themeId?: string;
    onToggle: () => void;
 }
 
@@ -22,9 +23,10 @@ export function CollapseHandle({
    width,
    height,
    branchIndex,
+   themeId = DEFAULT_MAP_THEME_ID,
    onToggle,
 }: CollapseHandleProps) {
-   const branch = getBranchTheme(branchIndex);
+   const branch = getBranchTheme(branchIndex, themeId);
    const handleSize = collapsed ? 26 : 18;
    const offset = collapsed ? 8 : 10;
 

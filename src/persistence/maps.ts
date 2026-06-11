@@ -1,4 +1,5 @@
 import type { ProjectState } from '@/core/model/project';
+import { normalizeProjectState } from '@/core/model/projectFactory';
 import { getSupabase } from '@/lib/supabase';
 
 export interface MapSummary {
@@ -41,11 +42,11 @@ export async function loadMap(mapId: string): Promise<ProjectState> {
   if (error) throw error;
 
   const row = data as MapRow;
-  return {
+  return normalizeProjectState({
     ...row.document,
     id: row.id,
     title: row.title,
-  };
+  });
 }
 
 export async function createMap(project: ProjectState): Promise<string> {
