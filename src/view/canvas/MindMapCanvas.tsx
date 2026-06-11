@@ -9,17 +9,25 @@ import { TopicView } from '@/view/topic/TopicView';
 interface MindMapCanvasProps {
   sheet: Sheet;
   selectedTopicId: TopicId | null;
+  /** Active map theme id — included so layout (edge colors) recomputes on change. */
+  themeId?: string;
   onSelectTopic: (topicId: TopicId) => void;
+  onTopicTextChange: (topicId: TopicId, text: string) => void;
+  onOpenNotesPanel: (topicId: TopicId) => void;
   onToggleCollapse: (topicId: TopicId) => void;
 }
 
 export function MindMapCanvas({
   sheet,
   selectedTopicId,
+  themeId,
   onSelectTopic,
+  onTopicTextChange,
+  onOpenNotesPanel,
   onToggleCollapse,
 }: MindMapCanvasProps) {
-  const layout = useMemo(() => layoutSheet(sheet), [sheet]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- themeId changes the active palette used inside layoutSheet
+  const layout = useMemo(() => layoutSheet(sheet), [sheet, themeId]);
 
   const topicNodes = useMemo(
     () => Array.from(layout.nodes.entries()),
@@ -49,7 +57,6 @@ export function MindMapCanvas({
     y: -layout.bounds.y,
   };
   const rootLayout = layout.nodes.get(sheet.rootTopicId);
-
   return (
     <div
       className="mindmap-canvas"
@@ -75,9 +82,13 @@ export function MindMapCanvas({
           <TopicView
             key={topicId}
             topicId={topicId}
+            text={sheet.topicsById[topicId]?.text ?? ''}
+            notes={sheet.topicsById[topicId]?.notes}
             layout={nodeLayout}
             selected={topicId === selectedTopicId}
             onSelect={onSelectTopic}
+            onTextChange={onTopicTextChange}
+            onOpenNotes={onOpenNotesPanel}
           />
         ))}
         {collapseHandles.map(({ topicId, nodeLayout, topic, descendantCount }) => (

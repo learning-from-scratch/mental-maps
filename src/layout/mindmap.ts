@@ -1,8 +1,7 @@
 import type { Sheet, Topic, TopicId } from '@/core/model/types';
-import { bracketEdges, branchColor, edgePath, rootEdgePath } from './edges';
+import { bracketChildGap, bracketEdges, branchColor, rootEdgePath } from './edges';
 import type { Point, RootFanRoute, RootSide } from './edges';
 import { getVisibleChildren, measureSheet } from './measure';
-import { branchThemeIndexForColor } from './theme';
 import type {
   EdgeLayout,
   LayoutResult,
@@ -12,9 +11,25 @@ import type {
 } from './types';
 
 const MAIN_BRANCH_H = 82;
-const CHILD_BRANCH_H = 54;
-const MAIN_BRANCH_V = 54;
-const CHILD_BRANCH_V = 10;
+const MAIN_BRANCH_V = 36;
+const CHILD_BRANCH_V = 8;
+
+/** Vertical gap between level-1 branches on the same side. */
+function level1SideSpacing(
+  sheet: Sheet,
+  children: Topic[],
+  measurements: Map<TopicId, NodeMeasurement>,
+  rootHeight: number,
+): number {
+  if (children.length !== 2) return MAIN_BRANCH_V;
+
+  const blockHeights = children.map((child) =>
+    subtreeBlockHeight(sheet, child.id, measurements, 1),
+  );
+  // XMind-style pair layout: one node clearly above and one clearly below the
+  // root center, so the pair clears the central topic vertically.
+  return Math.max(MAIN_BRANCH_V, Math.max(...blockHeights), rootHeight * 0.9);
+}
 
 function computeDepths(sheet: Sheet): Map<TopicId, number> {
   const depths = new Map<TopicId, number>();
@@ -38,19 +53,53 @@ function computeDepths(sheet: Sheet): Map<TopicId, number> {
   return depths;
 }
 
+/**
+ * Effective side for each level-1 branch. Mirrors the stored Topic.side with
+ * one override: a root with exactly two branches never splits them one per
+ * side — both go right so the map reads as a single fanned pair.
+ */
+function effectiveRootSides(sheet: Sheet): Map<TopicId, RootSide> {
+  const sides = new Map<TopicId, RootSide>();
+  const root = sheet.topicsById[sheet.rootTopicId];
+  if (!root) return sides;
+
+  for (const childId of root.childrenIds) {
+    const child = sheet.topicsById[childId];
+    sides.set(childId, child?.side === 'left' ? 'left' : 'right');
+  }
+
+  if (root.childrenIds.length === 2) {
+    const values = [...sides.values()];
+    if (values[0] !== values[1]) {
+      for (const id of sides.keys()) sides.set(id, 'right');
+    }
+  }
+
+  return sides;
+}
+
+/**
+ * Branch palette indices are positional: right-side branches first (top to
+ * insertion order), then left-side ones. This keeps every branch color
+ * unique within a side (and across sides while the palette lasts); colors
+ * may shift when branches are added or removed, which is intended.
+ */
 function computeBranchIndices(sheet: Sheet): Map<TopicId, number> {
   const indices = new Map<TopicId, number>();
   const root = sheet.topicsById[sheet.rootTopicId];
   if (!root) return indices;
 
   indices.set(sheet.rootTopicId, -1);
+  const sides = effectiveRootSides(sheet);
 
-  root.childrenIds.forEach((childId, index) => {
+  const ordered = [
+    ...root.childrenIds.filter((id) => sides.get(id) !== 'left'),
+    ...root.childrenIds.filter((id) => sides.get(id) === 'left'),
+  ];
+
+  ordered.forEach((childId, branchIndex) => {
     function walk(topicId: TopicId): void {
-      const rootChild = sheet.topicsById[childId];
-      const stableIndex = branchThemeIndexForColor(rootChild?.style?.branchColor) ?? index;
-
-      indices.set(topicId, stableIndex);
+      indices.set(topicId, branchIndex);
       const topic = sheet.topicsById[topicId];
       if (!topic || topic.collapsed) return;
       for (const id of topic.childrenIds) walk(id);
@@ -61,9 +110,9 @@ function computeBranchIndices(sheet: Sheet): Map<TopicId, number> {
   return indices;
 }
 
-function spacingForDepth(depth: number): { h: number; v: number } {
-  if (depth <= 1) return { h: MAIN_BRANCH_H, v: MAIN_BRANCH_V };
-  return { h: CHILD_BRANCH_H, v: CHILD_BRANCH_V };
+function spacingForDepth(depth: number): { v: number } {
+  if (depth <= 1) return { v: MAIN_BRANCH_V };
+  return { v: CHILD_BRANCH_V };
 }
 
 function subtreeBlockHeight(
@@ -134,7 +183,8 @@ function layoutBranch(
 
   const children = getVisibleChildren(sheet, topic);
   const blockHeight = subtreeBlockHeight(sheet, topicId, measurements, depth);
-  const { h, v } = spacingForDepth(depth + 1);
+  const { v } = spacingForDepth(depth + 1);
+  const h = depth === 0 ? MAIN_BRANCH_H : bracketChildGap(depth);
 
   if (children.length === 0) {
     const x = direction === 'right' ? anchorX : anchorX - measurement.width;
@@ -295,19 +345,12 @@ function buildEdges(
     return x * x * (3 - 2 * x);
   }
 
-  function fanStrength(branchCount: number): number {
-    if (branchCount <= 3) return 0.42;
-    if (branchCount === 4) return 0.58;
-    if (branchCount === 5) return 0.76;
-    return 1;
-  }
-
-  function branchSide(rootBox: RootAnchorBox, child: NodeLayout): RootSide {
-    const parentCenterX = rootBox.x + rootBox.width / 2;
-    const childCenterX = child.x + child.width / 2;
-    return childCenterX < parentCenterX ? 'left' : 'right';
-  }
-
+  /**
+   * Source anchor for a ranked level-1 connector. Anchors sit on or slightly
+   * inside the compact root box -- i.e. underneath the central topic -- so
+   * the root exclusion mask hides the curve's start and the visible stroke
+   * appears to emerge from under the topic box.
+   */
   function rankedRootAnchor(
     rootBox: RootAnchorBox,
     side: RootSide,
@@ -325,8 +368,9 @@ function buildEdges(
 
     const isUpper = rank < 0;
     const t = smoothstep(normalizedRank);
+    const tuck = 6;
     const bundleCenterX = cx + sideSign * Math.min(rootBox.width * 0.16, 72);
-    const bundleY = isUpper ? rootBox.y : rootBox.y + rootBox.height;
+    const bundleY = isUpper ? rootBox.y + tuck : rootBox.y + rootBox.height - tuck;
 
     return {
       x: lerp(sideX, bundleCenterX, t),
@@ -334,51 +378,39 @@ function buildEdges(
     };
   }
 
-  function pushAnchorOutsideRootBox(
-    anchor: Point,
-    rootBox: RootAnchorBox,
-  ): Point {
-    const clearance = 18;
-    const cx = rootBox.x + rootBox.width / 2;
-    const cy = rootBox.y + rootBox.height / 2;
-    const dx = anchor.x - cx;
-    const dy = anchor.y - cy;
-    const halfW = rootBox.width / 2;
-    const halfH = rootBox.height / 2;
-    const scale = 1 / Math.max(Math.abs(dx) / halfW, Math.abs(dy) / halfH);
-    const edge = {
-      x: cx + dx * scale,
-      y: cy + dy * scale,
-    };
-    const length = Math.hypot(dx, dy) || 1;
-
-    return {
-      x: edge.x + (dx / length) * clearance,
-      y: edge.y + (dy / length) * clearance,
-    };
-  }
-
-  function rootAnchors(parent: NodeLayout, children: NodeLayout[]): Map<NodeLayout, RootBranchAnchor> {
+  function rootAnchors(
+    parent: NodeLayout,
+    children: NodeLayout[],
+  ): Map<NodeLayout, RootBranchAnchor> {
     const anchors = new Map<NodeLayout, RootBranchAnchor>();
     const rootBox = compactRootAnchorBox(parent);
 
     for (const side of ['left', 'right'] as const) {
       const group = children
-        .filter((child) => branchSide(rootBox, child) === side)
+        .filter((child) => child.side === side)
         .sort((a, b) => a.y + a.height / 2 - (b.y + b.height / 2));
       const centerIndex = (group.length - 1) / 2;
-      const strength = fanStrength(group.length);
 
       group.forEach((child, index) => {
-        const rank = index - centerIndex;
+        const rank =
+          group.length === 2 ? (index === 0 ? -1 : 1) : index - centerIndex;
+        // Pairs use a gentle fan (0.6) rather than the full outermost sweep.
         const normalizedRank =
-          centerIndex === 0 ? 0 : (Math.abs(rank) / centerIndex) * strength;
-        const route = { side, rank, normalizedRank, strength };
-        const rawAnchor = rankedRootAnchor(rootBox, side, rank, normalizedRank);
-        anchors.set(child, {
-          source: pushAnchorOutsideRootBox(rawAnchor, rootBox),
-          route,
-        });
+          group.length === 2
+            ? 0.6
+            : centerIndex === 0
+              ? 0
+              : Math.abs(rank) / centerIndex;
+        const isSoloBranch = group.length === 1;
+        const route = { side, rank, normalizedRank, isSoloBranch };
+        const source = isSoloBranch
+          ? {
+              x: side === 'right' ? parent.x + parent.width : parent.x,
+              y: parent.y + parent.height / 2,
+            }
+          : rankedRootAnchor(rootBox, side, rank, normalizedRank);
+
+        anchors.set(child, { source, route });
       });
     }
 
@@ -398,10 +430,12 @@ function buildEdges(
     if (childLayouts.length === 0) continue;
 
     if (parentLayout.depth === 0) {
+      // Collapsed only hides descendants — level-1 nodes still connect to the root.
       const anchors = rootAnchors(parentLayout, childLayouts);
       for (const childLayout of childLayouts) {
         const childId = topic.childrenIds.find((id) => nodes.get(id) === childLayout);
         const anchor = anchors.get(childLayout);
+        const isSoloBranch = anchor?.route?.isSoloBranch ?? false;
         edges.push({
           id: `edge-${topic.id}-${childId ?? `${childLayout.x}-${childLayout.y}`}`,
           path: rootEdgePath(parentLayout, childLayout, anchor?.source, anchor?.route),
@@ -409,34 +443,23 @@ function buildEdges(
           strokeWidth: 2,
           fromId: topic.id,
           toId: childId,
+          maskExempt: isSoloBranch,
         });
       }
       continue;
     }
 
-    if (parentLayout.depth === 1) {
-      edges.push(
-        ...bracketEdges(topic.id, parentLayout, childLayouts, childLayouts[0]!.branchIndex).map(
-          (edge) => ({
-            ...edge,
-            fromId: topic.id,
-          }),
-        ),
-      );
-      continue;
-    }
-
-    for (const childLayout of childLayouts) {
-      const childId = topic.childrenIds.find((id) => nodes.get(id) === childLayout);
-      edges.push({
-        id: `edge-${topic.id}-${childId ?? `${childLayout.x}-${childLayout.y}`}`,
-        path: edgePath(parentLayout, childLayout),
-        color: branchColor(childLayout.branchIndex),
-        strokeWidth: 2,
+    edges.push(
+      ...bracketEdges(
+        topic.id,
+        parentLayout,
+        childLayouts,
+        childLayouts[0]!.branchIndex,
+      ).map((edge) => ({
+        ...edge,
         fromId: topic.id,
-        toId: childId,
-      });
-    }
+      })),
+    );
   }
 
   return edges;
@@ -444,10 +467,12 @@ function buildEdges(
 
 export function layoutMindmap(sheet: Sheet): LayoutResult {
   const depths = computeDepths(sheet);
-  const branchIndices = computeBranchIndices(sheet);
   const measurements = measureSheet(sheet, depths);
 
   assignSides(sheet, measurements);
+
+  // After side assignment so positional colors match the rendered sides.
+  const branchIndices = computeBranchIndices(sheet);
 
   const nodes = new Map<TopicId, NodeLayout>();
   const root = sheet.topicsById[sheet.rootTopicId];
@@ -457,27 +482,31 @@ export function layoutMindmap(sheet: Sheet): LayoutResult {
     return { nodes, edges: [], bounds: { x: 0, y: 0, width: 0, height: 0 } };
   }
 
+  const sides = effectiveRootSides(sheet);
   const leftChildren: Topic[] = [];
   const rightChildren: Topic[] = [];
 
   for (const childId of root.childrenIds) {
     const child = sheet.topicsById[childId];
     if (!child) continue;
-    if (child.side === 'left') leftChildren.push(child);
+    if (sides.get(childId) === 'left') leftChildren.push(child);
     else rightChildren.push(child);
   }
+
+  const leftSpacing = level1SideSpacing(sheet, leftChildren, measurements, rootMeasurement.height);
+  const rightSpacing = level1SideSpacing(sheet, rightChildren, measurements, rootMeasurement.height);
 
   const leftHeight =
     leftChildren.reduce(
       (sum, child) => sum + subtreeBlockHeight(sheet, child.id, measurements, 1),
       0,
-    ) + Math.max(0, leftChildren.length - 1) * MAIN_BRANCH_V;
+    ) + Math.max(0, leftChildren.length - 1) * leftSpacing;
 
   const rightHeight =
     rightChildren.reduce(
       (sum, child) => sum + subtreeBlockHeight(sheet, child.id, measurements, 1),
       0,
-    ) + Math.max(0, rightChildren.length - 1) * MAIN_BRANCH_V;
+    ) + Math.max(0, rightChildren.length - 1) * rightSpacing;
 
   const maxSideHeight = Math.max(leftHeight, rightHeight, rootMeasurement.height);
   const rootX = -rootMeasurement.width / 2;
@@ -513,7 +542,7 @@ export function layoutMindmap(sheet: Sheet): LayoutResult {
       measurements,
       nodes,
     );
-    rightTop += childBlockHeight + MAIN_BRANCH_V;
+    rightTop += childBlockHeight + rightSpacing;
   }
 
   const leftAnchorX = rootX - MAIN_BRANCH_H;
@@ -533,7 +562,7 @@ export function layoutMindmap(sheet: Sheet): LayoutResult {
       measurements,
       nodes,
     );
-    leftTop += childBlockHeight + MAIN_BRANCH_V;
+    leftTop += childBlockHeight + leftSpacing;
   }
 
   for (const floatingId of sheet.floatingTopicIds) {

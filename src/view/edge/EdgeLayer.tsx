@@ -1,4 +1,5 @@
 import { useId } from 'react';
+import { ROOT_MASK_RADIUS } from '@/layout/edges';
 import type { EdgeLayout, Rect } from '@/layout/types';
 
 interface EdgeLayerProps {
@@ -7,11 +8,30 @@ interface EdgeLayerProps {
   rootExclusion?: Rect;
 }
 
+function EdgePaths({ edges }: { edges: EdgeLayout[] }) {
+  return (
+    <>
+      {edges.map((edge) => (
+        <path
+          key={edge.id}
+          d={edge.path}
+          className="edge-layer__path"
+          stroke={edge.color}
+          strokeWidth={edge.strokeWidth ?? 2}
+          fill="none"
+        />
+      ))}
+    </>
+  );
+}
+
 export function EdgeLayer({ edges, bounds, rootExclusion }: EdgeLayerProps) {
   const maskId = useId().replace(/:/g, '');
   const width = Math.max(bounds.width, 1);
   const height = Math.max(bounds.height, 1);
   const rootPadding = 8;
+  const maskedEdges = edges.filter((edge) => !edge.maskExempt);
+  const unmaskedEdges = edges.filter((edge) => edge.maskExempt);
 
   return (
     <svg
@@ -39,25 +59,17 @@ export function EdgeLayer({ edges, bounds, rootExclusion }: EdgeLayerProps) {
               y={rootExclusion.y - rootPadding}
               width={rootExclusion.width + rootPadding * 2}
               height={rootExclusion.height + rootPadding * 2}
-              rx={12}
-              ry={12}
+              rx={ROOT_MASK_RADIUS}
+              ry={ROOT_MASK_RADIUS}
               fill="black"
             />
           </mask>
         </defs>
       )}
       <g mask={rootExclusion ? `url(#${maskId})` : undefined}>
-        {edges.map((edge) => (
-          <path
-            key={edge.id}
-            d={edge.path}
-            className="edge-layer__path"
-            stroke={edge.color}
-            strokeWidth={edge.strokeWidth ?? 2}
-            fill="none"
-          />
-        ))}
+        <EdgePaths edges={maskedEdges} />
       </g>
+      <EdgePaths edges={unmaskedEdges} />
     </svg>
   );
 }

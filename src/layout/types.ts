@@ -37,6 +37,8 @@ export interface EdgeLayout {
   strokeWidth?: number;
   fromId?: TopicId;
   toId?: TopicId;
+  /** Root solo connectors render outside the central-topic exclusion mask. */
+  maskExempt?: boolean;
 }
 
 export interface LayoutResult {

@@ -54,7 +54,7 @@ describe('edge anchoring', () => {
     expect(stem.path).toMatch(new RegExp(`M ${parent.x} `));
   });
 
-  it('expanded branch child connectors use rounded corners', () => {
+  it('expanded branch child connectors use a trunk with rounded fillets', () => {
     const doc = createSampleDocument();
     const sheet = doc.sheetsById[doc.sheets[0]!]!;
     const result = layoutMindmap(sheet);
@@ -65,9 +65,20 @@ describe('edge anchoring', () => {
       .filter(Boolean);
 
     const edges = bracketEdges('b2', parent, children, parent.branchIndex);
-    const childEdges = edges.filter((edge) => edge.id.startsWith('bracket-b2-'));
+    const childEdges = edges.filter(
+      (edge) => edge.id.startsWith('bracket-b2-') && !edge.id.includes('stem'),
+    );
+    const trunk = edges.find((edge) => edge.id.includes('trunk'))!;
 
+    expect(trunk.path).toMatch(/^M [\d.-]+ [\d.-]+ V [\d.-]+$/);
     expect(childEdges.some((edge) => edge.path.includes(' Q '))).toBe(true);
+    expect(childEdges.some((edge) => edge.path.includes(' H '))).toBe(true);
+
+    const trunkStartY = Number(trunk.path.match(/^M [\d.-]+ ([\d.-]+) V/)?.[1]);
+    const trunkEndY = Number(trunk.path.match(/ V ([\d.-]+)$/)?.[1]);
+    const childYs = children.map((child) => child.y + child.height / 2);
+    expect(trunkStartY).toBeGreaterThan(Math.min(...childYs));
+    expect(trunkEndY).toBeLessThan(Math.max(...childYs));
   });
 
   it('root edges curve smoothly into upper and lower branches', () => {
@@ -140,7 +151,7 @@ describe('edge anchoring', () => {
       root,
       topRight,
       { x: root.x + root.width * 0.75, y: root.y },
-      'top-right',
+      { side: 'right', rank: -1, normalizedRank: 1 },
     );
     const middlePath = rootEdgePath(root, middleRight, {
       x: root.x + root.width,
@@ -153,7 +164,7 @@ describe('edge anchoring', () => {
         x: root.x + root.width * 0.75,
         y: root.y + root.height,
       },
-      'bottom-right',
+      { side: 'right', rank: 1, normalizedRank: 1 },
     );
 
     const start = (path: string) => {
@@ -181,8 +192,8 @@ describe('edge anchoring', () => {
       };
     };
 
-    expect(control(topPath).x).toBeCloseTo(start(topPath).x);
-    expect(control(bottomPath).x).toBeCloseTo(start(bottomPath).x);
+    expect(control(topPath).x).toBeGreaterThan(start(topPath).x);
+    expect(control(bottomPath).x).toBeGreaterThan(start(bottomPath).x);
     expect(control(topPath).y).toBeLessThan(start(topPath).y);
     expect(control(bottomPath).y).toBeGreaterThan(start(bottomPath).y);
   });
@@ -230,21 +241,25 @@ describe('edge anchoring', () => {
       };
     };
 
-    const top = controls(rootEdgePath(root, topRight, { x: -20, y: root.y }, 'top-right'));
+    const top = controls(rootEdgePath(root, topRight, { x: -20, y: root.y }, {
+      side: 'right',
+      rank: -1,
+      normalizedRank: 1,
+    }));
     const middle = controls(rootEdgePath(root, middleRight, {
       x: root.x + root.width,
       y: root.y + root.height / 2,
-    }, 'right'));
+    }, { side: 'right', rank: 0, normalizedRank: 0 }));
     const bottom = controls(rootEdgePath(root, bottomRight, {
       x: -20,
       y: root.y + root.height,
-    }, 'bottom-right'));
+    }, { side: 'right', rank: 1, normalizedRank: 1 }));
 
     expect(top.c1.y).toBeLessThan(top.start.y);
-    expect(top.c1.x).toBeCloseTo(top.start.x);
+    expect(top.c1.x).toBeGreaterThan(top.start.x);
     expect(middle.c1.y).toBeCloseTo(middle.start.y);
     expect(bottom.c1.y).toBeGreaterThan(bottom.start.y);
-    expect(bottom.c1.x).toBeCloseTo(bottom.start.x);
+    expect(bottom.c1.x).toBeGreaterThan(bottom.start.x);
   });
 
   it('supports ordered root perimeter anchors by zone', () => {
@@ -401,7 +416,7 @@ describe('edge anchoring', () => {
       expect(edge.path).not.toContain(' H ');
       expect(edge.path).not.toContain(' V ');
       if (!edge.path.includes(' L ')) {
-        expect(edge.path).toContain(' C ');
+        expect(edge.path.includes(' C ') || edge.path.includes(' A ')).toBe(true);
         expect(edge.path).not.toContain(' Q ');
       }
     }

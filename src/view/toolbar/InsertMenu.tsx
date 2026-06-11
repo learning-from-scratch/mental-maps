@@ -1,26 +1,24 @@
-import { useEffect, useRef, type ReactNode } from 'react';
-import { ChevronRightIcon } from './ToolbarIcons';
 import {
-  AttachmentIcon,
-  EquationIcon,
-  IllustrationIcon,
-  LabelIcon,
-  LinkIcon,
-  LocalImageIcon,
-  NoteIcon,
-  StickerIcon,
-  TaskIcon,
-  TodoIcon,
-  TopicLinkIcon,
-  WebpageIcon,
-  ZoneIcon,
-} from './InsertMenuIcons';
+  Bookmark,
+  ChevronRight,
+  ExternalLink,
+  Globe,
+  ImagePlus,
+  Paperclip,
+  Sigma,
+  SquarePen,
+  Sticker,
+  Tag,
+} from 'lucide-react';
+import { useEffect, useRef, type ReactNode } from 'react';
+import { appIcon } from '@/view/icons';
 
 interface InsertMenuProps {
   open: boolean;
   onClose: () => void;
   linkSubmenuOpen: boolean;
   onLinkHover: (open: boolean) => void;
+  onNote?: () => void;
 }
 
 interface MenuItem {
@@ -30,40 +28,30 @@ interface MenuItem {
   hasSubmenu?: boolean;
 }
 
+const insertIcon = (className = 'insert-menu__svg') => appIcon(className);
+
 const MENU_SECTIONS: MenuItem[][] = [
-  [{ id: 'zone', label: 'Zone', icon: <ZoneIcon className="insert-menu__svg" /> }],
   [
-    { id: 'note', label: 'Note', icon: <NoteIcon className="insert-menu__svg" /> },
-    { id: 'label', label: 'Label', icon: <LabelIcon className="insert-menu__svg" /> },
-    { id: 'todo', label: 'To-Do', icon: <TodoIcon className="insert-menu__svg" /> },
-    { id: 'task', label: 'Task', icon: <TaskIcon className="insert-menu__svg" /> },
+    { id: 'note', label: 'Note', icon: <SquarePen {...insertIcon()} /> },
+    { id: 'label', label: 'Label', icon: <Tag {...insertIcon()} /> },
     {
       id: 'link',
       label: 'Link',
-      icon: <LinkIcon className="insert-menu__svg" />,
+      icon: <ExternalLink {...insertIcon()} />,
       hasSubmenu: true,
     },
   ],
-  [{ id: 'attachment', label: 'Attachment', icon: <AttachmentIcon className="insert-menu__svg" /> }],
+  [{ id: 'attachment', label: 'Attachment', icon: <Paperclip {...insertIcon()} /> }],
   [
-    { id: 'sticker', label: 'Sticker', icon: <StickerIcon className="insert-menu__svg" /> },
-    {
-      id: 'illustration',
-      label: 'Illustration',
-      icon: <IllustrationIcon className="insert-menu__svg" />,
-    },
-    {
-      id: 'local-image',
-      label: 'Local Image',
-      icon: <LocalImageIcon className="insert-menu__svg" />,
-    },
-    { id: 'equation', label: 'Equation', icon: <EquationIcon className="insert-menu__svg" /> },
+    { id: 'sticker', label: 'Sticker', icon: <Sticker {...insertIcon()} /> },
+    { id: 'local-image', label: 'Local Image', icon: <ImagePlus {...insertIcon()} /> },
+    { id: 'equation', label: 'Equation', icon: <Sigma {...insertIcon()} /> },
   ],
 ];
 
 const LINK_ITEMS: MenuItem[] = [
-  { id: 'webpage', label: 'Webpage', icon: <WebpageIcon className="insert-menu__svg" /> },
-  { id: 'topic', label: 'Topic', icon: <TopicLinkIcon className="insert-menu__svg" /> },
+  { id: 'webpage', label: 'Webpage', icon: <Globe {...insertIcon()} /> },
+  { id: 'topic', label: 'Topic', icon: <Bookmark {...insertIcon()} /> },
 ];
 
 function MenuRow({ item }: { item: MenuItem }) {
@@ -73,12 +61,18 @@ function MenuRow({ item }: { item: MenuItem }) {
         {item.icon}
       </span>
       <span className="insert-menu__label">{item.label}</span>
-      {item.hasSubmenu && <ChevronRightIcon className="insert-menu__chevron" />}
+      {item.hasSubmenu && <ChevronRight {...appIcon('insert-menu__chevron')} />}
     </>
   );
 }
 
-export function InsertMenu({ open, onClose, linkSubmenuOpen, onLinkHover }: InsertMenuProps) {
+export function InsertMenu({
+  open,
+  onClose,
+  linkSubmenuOpen,
+  onLinkHover,
+  onNote,
+}: InsertMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -93,6 +87,13 @@ export function InsertMenu({ open, onClose, linkSubmenuOpen, onLinkHover }: Inse
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
   }, [open, onClose]);
+
+  const handleItemClick = (itemId: string) => {
+    if (itemId === 'note') {
+      onNote?.();
+      onClose();
+    }
+  };
 
   if (!open) return null;
 
@@ -116,7 +117,11 @@ export function InsertMenu({ open, onClose, linkSubmenuOpen, onLinkHover }: Inse
                 {linkSubmenuOpen && (
                   <div className="insert-menu__submenu">
                     {LINK_ITEMS.map((linkItem) => (
-                      <button key={linkItem.id} type="button" className="insert-menu__submenu-item">
+                      <button
+                        key={linkItem.id}
+                        type="button"
+                        className="insert-menu__submenu-item"
+                      >
                         <MenuRow item={linkItem} />
                       </button>
                     ))}
@@ -124,9 +129,14 @@ export function InsertMenu({ open, onClose, linkSubmenuOpen, onLinkHover }: Inse
                 )}
               </div>
             ) : (
-              <div key={item.id} className="insert-menu__item">
+              <button
+                key={item.id}
+                type="button"
+                className="insert-menu__item insert-menu__item--button"
+                onClick={() => handleItemClick(item.id)}
+              >
                 <MenuRow item={item} />
-              </div>
+              </button>
             ),
           )}
         </div>
