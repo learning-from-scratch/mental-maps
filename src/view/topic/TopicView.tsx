@@ -25,6 +25,8 @@ interface TopicViewProps {
   onSelect?: (topicId: TopicId) => void;
   onTextChange?: (topicId: TopicId, text: string) => void;
   onLiveTextChange?: (topicId: TopicId, text: string | null) => void;
+  onInsertChild?: (topicId: TopicId, pendingText?: string) => void;
+  onInsertSibling?: (topicId: TopicId, pendingText?: string) => void;
   onOpenNotes?: (topicId: TopicId) => void;
 }
 
@@ -38,6 +40,8 @@ export function TopicView({
   onSelect,
   onTextChange,
   onLiveTextChange,
+  onInsertChild,
+  onInsertSibling,
   onOpenNotes,
 }: TopicViewProps) {
   const [isEditing, setIsEditing] = useState(false);
@@ -242,7 +246,16 @@ export function TopicView({
               event.stopPropagation();
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
-                commitEdit();
+                const pendingText = draftTextRef.current;
+                setIsEditing(false);
+                onLiveTextChange?.(topicId, null);
+                onInsertSibling?.(topicId, pendingText);
+              } else if (event.key === 'Tab') {
+                event.preventDefault();
+                const pendingText = draftTextRef.current;
+                setIsEditing(false);
+                onLiveTextChange?.(topicId, null);
+                onInsertChild?.(topicId, pendingText);
               } else if (event.key === 'Escape') {
                 event.preventDefault();
                 cancelEdit();

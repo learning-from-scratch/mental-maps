@@ -60,6 +60,105 @@ function chooseRootBranchSide(
    return preferredSide;
 }
 
+function buildSheetCommandCtx(draft: Sheet) {
+   return {
+      doc: {
+         formatVersion: 1 as const,
+         id: 'keyboard-session',
+         title: draft.title,
+         createdAt: Date.now(),
+         modifiedAt: Date.now(),
+         sheets: [draft.id],
+         sheetsById: { [draft.id]: draft },
+      },
+      sheetId: draft.id,
+   };
+}
+
+function insertChildInDraft(draft: Sheet, parentId: TopicId, themeId: string): TopicId | null {
+   const parent = draft.topicsById[parentId];
+   if (!parent) return null;
+
+   const root = draft.topicsById[draft.rootTopicId];
+   const nextRootBranchColor = () =>
+      branchColorForIndex(root?.childrenIds.length ?? 0, themeId);
+   const applyRootBranchColor = (topicId: TopicId, color: string) => {
+      const topic = draft.topicsById[topicId];
+      if (!topic) return;
+      topic.style = { ...topic.style, branchColor: color };
+   };
+
+   if (parent.collapsed) parent.collapsed = false;
+   const side =
+      parent.id === draft.rootTopicId
+         ? chooseRootBranchSide(draft, parent.side ?? 'right')
+         : (parent.side ?? 'right');
+   const branchColor =
+      parent.id === draft.rootTopicId ? nextRootBranchColor() : parent.style?.branchColor;
+
+   const insertedTopicId = addChild(buildSheetCommandCtx(draft), {
+      parentId,
+      text: 'New Topic',
+      side,
+   });
+   if (branchColor) applyRootBranchColor(insertedTopicId, branchColor);
+   return insertedTopicId;
+}
+
+function insertSiblingInDraft(draft: Sheet, topicId: TopicId, themeId: string): TopicId | null {
+   const selectedTopic = draft.topicsById[topicId];
+   if (!selectedTopic) return null;
+
+   const root = draft.topicsById[draft.rootTopicId];
+   const nextRootBranchColor = () =>
+      branchColorForIndex(root?.childrenIds.length ?? 0, themeId);
+   const applyRootBranchColor = (id: TopicId, color: string) => {
+      const topic = draft.topicsById[id];
+      if (!topic) return;
+      topic.style = { ...topic.style, branchColor: color };
+   };
+
+   const ctx = buildSheetCommandCtx(draft);
+
+   if (selectedTopic.parentId) {
+      const parent = draft.topicsById[selectedTopic.parentId];
+      const side =
+         parent?.id === draft.rootTopicId
+            ? chooseRootBranchSide(draft, selectedTopic.side ?? 'right')
+            : selectedTopic.side;
+      const branchColor =
+         parent?.id === draft.rootTopicId
+            ? nextRootBranchColor()
+            : selectedTopic.style?.branchColor;
+
+      const insertedTopicId = addSibling(ctx, {
+         topicId,
+         text: 'New Topic',
+      });
+      const insertedTopic = draft.topicsById[insertedTopicId];
+      if (insertedTopic) insertedTopic.side = side;
+      if (branchColor) applyRootBranchColor(insertedTopicId, branchColor);
+      return insertedTopicId;
+   }
+
+   const branchColor = nextRootBranchColor();
+   const side = chooseRootBranchSide(draft, 'right');
+   const insertedTopicId = addChild(ctx, {
+      parentId: topicId,
+      text: 'New Topic',
+      side,
+   });
+   applyRootBranchColor(insertedTopicId, branchColor);
+   return insertedTopicId;
+}
+
+function applyPendingTopicText(draft: Sheet, topicId: TopicId, pendingText: string) {
+   const topic = draft.topicsById[topicId];
+   if (!topic) return;
+   const trimmed = pendingText.trim();
+   if (trimmed) topic.text = trimmed;
+}
+
 function nextSelectionAfterDelete(sheet: Sheet, topicId: TopicId): TopicId | null {
    const topic = sheet.topicsById[topicId];
    if (!topic || topic.id === sheet.rootTopicId) return topic?.id ?? null;
@@ -256,6 +355,30 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       });
    };
 
+   const insertChildTopic = useCallback(
+      (topicId: TopicId, pendingText?: string) => {
+         let insertedTopicId: TopicId | null = null;
+         updateActiveSheet((draft) => {
+            if (pendingText !== undefined) applyPendingTopicText(draft, topicId, pendingText);
+            insertedTopicId = insertChildInDraft(draft, topicId, mapThemeId);
+         });
+         if (insertedTopicId) setSelectedTopicId(insertedTopicId);
+      },
+      [mapThemeId, activeProjectId],
+   );
+
+   const insertSiblingTopic = useCallback(
+      (topicId: TopicId, pendingText?: string) => {
+         let insertedTopicId: TopicId | null = null;
+         updateActiveSheet((draft) => {
+            if (pendingText !== undefined) applyPendingTopicText(draft, topicId, pendingText);
+            insertedTopicId = insertSiblingInDraft(draft, topicId, mapThemeId);
+         });
+         if (insertedTopicId) setSelectedTopicId(insertedTopicId);
+      },
+      [mapThemeId, activeProjectId],
+   );
+
    const setZoom = useCallback((zoom: number) => {
       const container = document.querySelector('.viewport');
       const width = container?.clientWidth ?? window.innerWidth;
@@ -324,90 +447,17 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             return;
          }
 
-         let insertedTopicId: TopicId | null = null;
-         updateActiveSheet((draft) => {
-            const selectedTopic = draft.topicsById[selectedTopicId];
-            if (!selectedTopic) return;
+         if (event.key === 'Tab') {
+            insertChildTopic(selectedTopicId);
+            return;
+         }
 
-            const root = draft.topicsById[draft.rootTopicId];
-            const nextRootBranchColor = () =>
-               branchColorForIndex(root?.childrenIds.length ?? 0, mapThemeId);
-            const applyRootBranchColor = (topicId: TopicId, color: string) => {
-               const topic = draft.topicsById[topicId];
-               if (!topic) return;
-               topic.style = {
-                  ...topic.style,
-                  branchColor: color,
-               };
-            };
-
-            const doc = {
-               formatVersion: 1 as const,
-               id: 'keyboard-session',
-               title: draft.title,
-               createdAt: Date.now(),
-               modifiedAt: Date.now(),
-               sheets: [draft.id],
-               sheetsById: { [draft.id]: draft },
-            };
-            const ctx = { doc, sheetId: draft.id };
-
-            if (event.key === 'Tab') {
-               if (selectedTopic.collapsed) selectedTopic.collapsed = false;
-               const side =
-                  selectedTopic.id === draft.rootTopicId
-                     ? chooseRootBranchSide(draft, selectedTopic.side ?? 'right')
-                     : selectedTopic.side;
-               const branchColor =
-                  selectedTopic.id === draft.rootTopicId
-                     ? nextRootBranchColor()
-                     : selectedTopic.style?.branchColor;
-
-               insertedTopicId = addChild(ctx, {
-                  parentId: selectedTopicId,
-                  text: 'New Topic',
-                  side,
-               });
-               if (branchColor) applyRootBranchColor(insertedTopicId, branchColor);
-               return;
-            }
-
-            if (selectedTopic.parentId) {
-               const parent = draft.topicsById[selectedTopic.parentId];
-               const side =
-                  parent?.id === draft.rootTopicId
-                     ? chooseRootBranchSide(draft, selectedTopic.side ?? 'right')
-                     : selectedTopic.side;
-               const branchColor =
-                  parent?.id === draft.rootTopicId
-                     ? nextRootBranchColor()
-                     : selectedTopic.style?.branchColor;
-
-               insertedTopicId = addSibling(ctx, {
-                  topicId: selectedTopicId,
-                  text: 'New Topic',
-               });
-               const insertedTopic = draft.topicsById[insertedTopicId];
-               if (insertedTopic) insertedTopic.side = side;
-               if (branchColor) applyRootBranchColor(insertedTopicId, branchColor);
-            } else {
-               const branchColor = nextRootBranchColor();
-               const side = chooseRootBranchSide(draft, 'right');
-               insertedTopicId = addChild(ctx, {
-                  parentId: selectedTopicId,
-                  text: 'New Topic',
-                  side,
-               });
-               applyRootBranchColor(insertedTopicId, branchColor);
-            }
-         });
-
-         if (insertedTopicId) setSelectedTopicId(insertedTopicId);
+         insertSiblingTopic(selectedTopicId);
       };
 
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-   }, [selectedTopicId, sheet, mapThemeId]);
+   }, [selectedTopicId, sheet, mapThemeId, insertChildTopic, insertSiblingTopic]);
 
    const toggleCollapse = (topicId: TopicId) => {
       updateActiveSheet((draft) => {
@@ -656,6 +706,8 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                      setSelectedTopicId(topicId);
                   }}
                   onTopicTextChange={updateTopicText}
+                  onInsertChild={insertChildTopic}
+                  onInsertSibling={insertSiblingTopic}
                   onOpenNotesPanel={openNotesPanelFor}
                   onToggleCollapse={toggleCollapse}
                />

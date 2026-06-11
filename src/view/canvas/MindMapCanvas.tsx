@@ -14,6 +14,8 @@ interface MindMapCanvasProps {
   themeId?: string;
   onSelectTopic: (topicId: TopicId) => void;
   onTopicTextChange: (topicId: TopicId, text: string) => void;
+  onInsertChild: (topicId: TopicId, pendingText?: string) => void;
+  onInsertSibling: (topicId: TopicId, pendingText?: string) => void;
   onOpenNotesPanel: (topicId: TopicId) => void;
   onToggleCollapse: (topicId: TopicId) => void;
 }
@@ -24,6 +26,8 @@ export function MindMapCanvas({
   themeId = DEFAULT_MAP_THEME_ID,
   onSelectTopic,
   onTopicTextChange,
+  onInsertChild,
+  onInsertSibling,
   onOpenNotesPanel,
   onToggleCollapse,
 }: MindMapCanvasProps) {
@@ -114,6 +118,8 @@ export function MindMapCanvas({
             onSelect={onSelectTopic}
             onTextChange={onTopicTextChange}
             onLiveTextChange={handleLiveTextChange}
+            onInsertChild={onInsertChild}
+            onInsertSibling={onInsertSibling}
             onOpenNotes={onOpenNotesPanel}
           />
         ))}
