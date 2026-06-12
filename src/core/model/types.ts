@@ -7,6 +7,12 @@ export interface Vec2 {
   y: number;
 }
 
+export interface TopicEquation {
+  latex: string;
+  scale?: number;
+  placement?: 'top' | 'bottom' | 'left' | 'right' | { row: number; col: number };
+}
+
 export interface TopicStyle {
   shape?: 'rounded-rect' | 'rect' | 'ellipse' | 'underline' | 'capsule';
   fill?: string;
@@ -29,8 +35,10 @@ export interface Topic {
   side?: 'left' | 'right';
   position?: Vec2;
   notes?: string;
-  link?: { url: string; title?: string };
+  link?: { url: string; title?: string; kind?: 'webpage' | 'cloud' };
+  equation?: TopicEquation;
   labels: string[];
+  labelsAutoSort?: boolean;
   markers: MarkerId[];
   style?: TopicStyle;
 }

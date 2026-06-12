@@ -20,6 +20,10 @@ interface FloatingToolbarProps {
   onInsertSibling: () => void;
   onInsertChild: () => void;
   onAddContent: () => void;
+  onAddLabel: () => void;
+  onAddWebpage: () => void;
+  onAddCloudStorage: () => void;
+  onAddEquation: () => void;
   onAddComment: () => void;
 }
 
@@ -154,6 +158,10 @@ export function FloatingToolbar({
   onInsertSibling,
   onInsertChild,
   onAddContent,
+  onAddLabel,
+  onAddWebpage,
+  onAddCloudStorage,
+  onAddEquation,
   onAddComment,
 }: FloatingToolbarProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -231,6 +239,10 @@ export function FloatingToolbar({
         <InsertContentButton
           hasSelection={hasSelection}
           onAddNote={onAddContent}
+          onAddLabel={onAddLabel}
+          onAddWebpage={onAddWebpage}
+          onAddCloudStorage={onAddCloudStorage}
+          onAddEquation={onAddEquation}
           onAddComment={onAddComment}
         />
       </div>

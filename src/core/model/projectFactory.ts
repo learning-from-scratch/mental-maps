@@ -17,8 +17,16 @@ export function normalizeSheet(
   projectThemeFallback?: string,
   projectDotsFallback?: boolean,
 ): Sheet {
+  const topicsById = Object.fromEntries(
+    Object.entries(sheet.topicsById).map(([id, topic]) => [
+      id,
+      { ...topic, labels: topic.labels ?? [] },
+    ]),
+  ) as Sheet['topicsById'];
+
   return {
     ...sheet,
+    topicsById,
     theme: resolveSheetThemeId(sheet.theme, projectThemeFallback ?? DEFAULT_MAP_THEME_ID),
     canvasDotsEnabled: sheet.canvasDotsEnabled ?? projectDotsFallback ?? true,
   };

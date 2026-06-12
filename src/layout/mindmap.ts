@@ -1,3 +1,4 @@
+import { measureLabelsBlock } from '@/core/model/labels';
 import type { Sheet, Topic, TopicId } from '@/core/model/types';
 import { DEFAULT_MAP_THEME_ID } from './theme';
 import { bracketChildGap, bracketEdges, branchColor, rootEdgePath } from './edges';
@@ -126,16 +127,21 @@ function subtreeBlockHeight(
   const measurement = measurements.get(topicId);
   if (!topic || !measurement) return 0;
 
+  const ownHeight =
+    measurement.height + measureLabelsBlock(topic.labels ?? [], measurement.width);
+
   const children = getVisibleChildren(sheet, topic);
-  if (children.length === 0) return measurement.height;
+  if (children.length === 0) {
+    return ownHeight;
+  }
 
   const { v } = spacingForDepth(depth + 1);
-  let total = 0;
+  let childrenTotal = 0;
   for (const child of children) {
-    total += subtreeBlockHeight(sheet, child.id, measurements, depth + 1);
+    childrenTotal += subtreeBlockHeight(sheet, child.id, measurements, depth + 1);
   }
-  total += (children.length - 1) * v;
-  return total;
+  childrenTotal += (children.length - 1) * v;
+  return Math.max(ownHeight, childrenTotal);
 }
 
 function assignSides(sheet: Sheet, measurements: Map<TopicId, NodeMeasurement>): void {
@@ -185,11 +191,55 @@ function layoutBranch(
   const children = getVisibleChildren(sheet, topic);
   const blockHeight = subtreeBlockHeight(sheet, topicId, measurements, depth);
   const { v } = spacingForDepth(depth + 1);
-  const h = depth === 0 ? MAIN_BRANCH_H : bracketChildGap(depth);
+  const h =
+    depth === 0 ? MAIN_BRANCH_H : bracketChildGap(depth, children.length);
 
   if (children.length === 0) {
     const x = direction === 'right' ? anchorX : anchorX - measurement.width;
-    const y = blockTopY + blockHeight / 2 - measurement.height / 2;
+    const labelsBlock = measureLabelsBlock(topic.labels ?? [], measurement.width);
+    const y =
+      labelsBlock > 0
+        ? blockTopY
+        : blockTopY + blockHeight / 2 - measurement.height / 2;
+
+    nodes.set(topicId, {
+      x,
+      y,
+      width: measurement.width,
+      height: measurement.height,
+      side: direction,
+      lines: measurement.lines,
+      fontSize: measurement.fontSize,
+      lineHeight: measurement.lineHeight,
+      depth,
+      branchIndex,
+    });
+    return;
+  }
+
+  if (children.length === 1) {
+    const child = children[0]!;
+    const childBlockHeight = subtreeBlockHeight(sheet, child.id, measurements, depth + 1);
+    const blockCenterY = blockTopY + blockHeight / 2;
+    const childAnchorX =
+      direction === 'right'
+        ? anchorX + measurement.width + h
+        : anchorX - measurement.width - h;
+
+    layoutBranch(
+      sheet,
+      child.id,
+      direction,
+      childAnchorX,
+      blockCenterY - childBlockHeight / 2,
+      depth + 1,
+      branchIndex,
+      measurements,
+      nodes,
+    );
+
+    const x = direction === 'right' ? anchorX : anchorX - measurement.width;
+    const y = blockCenterY - measurement.height / 2;
 
     nodes.set(topicId, {
       x,

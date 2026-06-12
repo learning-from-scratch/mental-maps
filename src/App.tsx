@@ -10,6 +10,7 @@ import {
    prepareProjectSheet,
    projectFromSheet,
 } from '@/core/model/projectFactory';
+import type { TopicLinkKind } from '@/core/model/link';
 import type { Sheet, SheetId, TopicId } from '@/core/model/types';
 import { createSampleDocument } from '@/demo/sampleDocument';
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
@@ -20,6 +21,7 @@ import {
    resolveSheetThemeId,
 } from '@/layout/theme';
 import { layoutSheet } from '@/layout';
+import { clearMeasureCache } from '@/layout/measure';
 import {
    isViewportNavHintDismissed,
    markViewportNavHintDismissed,
@@ -27,6 +29,13 @@ import {
 import { createMap, listMaps, loadMap, saveMap } from '@/persistence/maps';
 import { MindMapCanvas } from '@/view/canvas/MindMapCanvas';
 import { Viewport, type ViewportState } from '@/view/canvas/Viewport';
+import { isExternalLinkConfirmSkipped } from '@/prefs/externalLinkConfirm';
+import {
+   InsertWebLinkModal,
+} from '@/view/topic/InsertWebLinkModal';
+import { OpenExternalLinkModal } from '@/view/topic/OpenExternalLinkModal';
+import { TopicLabelPanel } from '@/view/topic/TopicLabelPanel';
+import { TopicEquationPanel } from '@/view/topic/TopicEquationPanel';
 import { TopicNotesPanel } from '@/view/topic/TopicNotesPanel';
 import { ThemeSidebar } from '@/view/sidebar/ThemeSidebar';
 import { BottomPanel } from '@/view/status/BottomPanel';
@@ -204,11 +213,19 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    const [cloudError, setCloudError] = useState<string | null>(null);
    const urlNavigationHandled = useRef(false);
    const [notesPanelTopicId, setNotesPanelTopicId] = useState<TopicId | null>(null);
+   const [labelPanelTopicId, setLabelPanelTopicId] = useState<TopicId | null>(null);
+   const [webLinkModalTopicId, setWebLinkModalTopicId] = useState<TopicId | null>(null);
+   const [webLinkModalKind, setWebLinkModalKind] = useState<TopicLinkKind>('webpage');
+   const [equationPanelTopicId, setEquationPanelTopicId] = useState<TopicId | null>(null);
+   const [equationSelectedTopicId, setEquationSelectedTopicId] = useState<TopicId | null>(null);
+   const [externalLinkUrl, setExternalLinkUrl] = useState<string | null>(null);
    const [editTopicId, setEditTopicId] = useState<TopicId | null>(null);
    const [editingTopicId, setEditingTopicId] = useState<TopicId | null>(null);
    const activeProjectIdRef = useRef(activeProjectId);
    activeProjectIdRef.current = activeProjectId;
    const notesCommitRef = useRef<(() => void) | null>(null);
+   const labelCommitRef = useRef<(() => void) | null>(null);
+   const equationCommitRef = useRef<(() => void) | null>(null);
    const [viewport, setViewport] = useState<ViewportState>(() => ({
       x: window.innerWidth / 2 - 64,
       y: window.innerHeight / 2,
@@ -326,23 +343,49 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       [sheet, mapThemeId],
    );
 
-   const notesScreenAnchor = useMemo(() => {
-      if (!notesPanelTopicId || !mapLayout) return null;
-      const node = mapLayout.nodes.get(notesPanelTopicId);
-      if (!node) return null;
+   const topicPanelAnchor = useCallback(
+      (topicId: TopicId | null) => {
+         if (!topicId || !mapLayout) return null;
+         const node = mapLayout.nodes.get(topicId);
+         if (!node) return null;
 
-      const worldX = node.x + node.width / 2;
-      const worldY = node.y + node.height + 10;
+         const worldX = node.x + node.width / 2;
+         const worldY = node.y + node.height + 10;
 
-      return {
-         left: viewport.x + viewport.zoom * worldX,
-         top: viewport.y + viewport.zoom * worldY,
-         zoom: viewport.zoom,
-      };
-   }, [notesPanelTopicId, mapLayout, viewport]);
+         return {
+            left: viewport.x + viewport.zoom * worldX,
+            top: viewport.y + viewport.zoom * worldY,
+            zoom: viewport.zoom,
+         };
+      },
+      [mapLayout, viewport],
+   );
+
+   const notesScreenAnchor = useMemo(
+      () => topicPanelAnchor(notesPanelTopicId),
+      [notesPanelTopicId, topicPanelAnchor],
+   );
+
+   const labelScreenAnchor = useMemo(
+      () => topicPanelAnchor(labelPanelTopicId),
+      [labelPanelTopicId, topicPanelAnchor],
+   );
+
+   const equationScreenAnchor = useMemo(
+      () => topicPanelAnchor(equationPanelTopicId),
+      [equationPanelTopicId, topicPanelAnchor],
+   );
 
    const notesTopic =
       notesPanelTopicId != null && sheet ? sheet.topicsById[notesPanelTopicId] : undefined;
+
+   const labelTopic =
+      labelPanelTopicId != null && sheet ? sheet.topicsById[labelPanelTopicId] : undefined;
+
+   const equationTopic =
+      equationPanelTopicId != null && sheet
+         ? sheet.topicsById[equationPanelTopicId]
+         : undefined;
 
    const updateActiveSheet = useCallback(
       (recipe: (sheet: Sheet) => void) => {
@@ -366,44 +409,6 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       [activeProjectId],
    );
 
-   const insertTopicAndActivate = useCallback(
-      (recipe: (draft: Sheet, topicId: TopicId) => void, sourceTopicId: TopicId) => {
-         let insertedTopicId: TopicId | null = null;
-
-         flushSync(() => {
-            setProjects((current) =>
-               current.map((project) => {
-                  if (project.id !== activeProjectIdRef.current) return project;
-
-                  const activeSheet = project.sheetsById[project.activeSheetId];
-                  if (!activeSheet) return project;
-
-                  const nextSheet = produce(activeSheet, (draft) => {
-                     recipe(draft, sourceTopicId);
-                  });
-                  insertedTopicId = findInsertedTopicId(activeSheet, nextSheet);
-
-                  return {
-                     ...project,
-                     sheetsById: {
-                        ...project.sheetsById,
-                        [project.activeSheetId]: nextSheet,
-                     },
-                  };
-               }),
-            );
-
-            if (insertedTopicId) {
-               setSelectedTopicId(insertedTopicId);
-               setEditTopicId(insertedTopicId);
-            }
-         });
-
-         return insertedTopicId;
-      },
-      [],
-   );
-
    const selectMapTheme = (themeId: string) => {
       updateActiveSheet((draft) => {
          draft.theme = themeId;
@@ -417,24 +422,26 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    };
 
    const insertChildTopic = useCallback(
-      (topicId: TopicId) => {
+      (topicId: TopicId, commitText?: string) => {
          insertTopicAndActivate(
             (draft, parentId) => {
                insertChildInDraft(draft, parentId, mapThemeId);
             },
             topicId,
+            commitText !== undefined ? { commitText } : undefined,
          );
       },
       [mapThemeId, insertTopicAndActivate],
    );
 
    const insertSiblingTopic = useCallback(
-      (topicId: TopicId) => {
+      (topicId: TopicId, commitText?: string) => {
          insertTopicAndActivate(
             (draft, siblingId) => {
                insertSiblingInDraft(draft, siblingId, mapThemeId);
             },
             topicId,
+            commitText !== undefined ? { commitText } : undefined,
          );
       },
       [mapThemeId, insertTopicAndActivate],
@@ -526,7 +533,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-   }, [selectedTopicId, sheet, editingTopicId, insertChildTopic, insertSiblingTopic]);
+   }, [selectedTopicId, sheet, editingTopicId, equationSelectedTopicId, insertChildTopic, insertSiblingTopic]);
 
    const toggleCollapse = (topicId: TopicId) => {
       updateActiveSheet((draft) => {
@@ -549,22 +556,272 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       });
    };
 
+   const updateTopicLabels = (topicId: TopicId, labels: string[], labelsAutoSort: boolean) => {
+      updateActiveSheet((draft) => {
+         const topic = draft.topicsById[topicId];
+         if (!topic) return;
+         topic.labels = labels;
+         topic.labelsAutoSort = labelsAutoSort;
+      });
+   };
+
+   const updateTopicLink = (
+      topicId: TopicId,
+      link: { url: string; title?: string; kind?: TopicLinkKind } | undefined,
+   ) => {
+      updateActiveSheet((draft) => {
+         const topic = draft.topicsById[topicId];
+         if (!topic) return;
+         topic.link = link;
+      });
+   };
+
+   const removeTopicNote = (topicId: TopicId) => {
+      updateActiveSheet((draft) => {
+         const topic = draft.topicsById[topicId];
+         if (topic) topic.notes = undefined;
+      });
+   };
+
+   const removeTopicLink = (topicId: TopicId) => {
+      updateActiveSheet((draft) => {
+         const topic = draft.topicsById[topicId];
+         if (topic) topic.link = undefined;
+      });
+   };
+
+   const updateTopicEquation = (topicId: TopicId, latex: string, scale?: number) => {
+      updateActiveSheet((draft) => {
+         const topic = draft.topicsById[topicId];
+         if (!topic) return;
+         const trimmed = latex.trim();
+         if (!trimmed) {
+            topic.equation = undefined;
+            return;
+         }
+         topic.equation = {
+            latex: trimmed,
+            scale: scale ?? topic.equation?.scale,
+            placement: topic.equation?.placement,
+         };
+      });
+   };
+
+   const updateTopicEquationScale = (topicId: TopicId, scale: number) => {
+      updateActiveSheet((draft) => {
+         const topic = draft.topicsById[topicId];
+         if (!topic?.equation) return;
+         topic.equation = { ...topic.equation, scale };
+      });
+   };
+
+   const updateTopicEquationPlacement = (
+      topicId: TopicId,
+      placement: 'top' | 'bottom' | 'left' | 'right',
+   ) => {
+      updateActiveSheet((draft) => {
+         const topic = draft.topicsById[topicId];
+         if (!topic?.equation) return;
+         topic.equation = { ...topic.equation, placement };
+      });
+   };
+
+   const moveTopicEquation = (
+      fromTopicId: TopicId,
+      toTopicId: TopicId,
+      placement: 'top' | 'bottom' | 'left' | 'right',
+   ) => {
+      clearMeasureCache();
+      updateActiveSheet((draft) => {
+         const fromTopic = draft.topicsById[fromTopicId];
+         const toTopic = draft.topicsById[toTopicId];
+         if (!fromTopic?.equation || !toTopic || fromTopicId === toTopicId) return;
+
+         toTopic.equation = { ...fromTopic.equation, placement };
+         fromTopic.equation = undefined;
+      });
+      setEquationSelectedTopicId(toTopicId);
+      setSelectedTopicId(toTopicId);
+   };
+
+   const removeTopicEquation = (topicId: TopicId) => {
+      updateActiveSheet((draft) => {
+         const topic = draft.topicsById[topicId];
+         if (topic) topic.equation = undefined;
+      });
+      if (equationSelectedTopicId === topicId) {
+         setEquationSelectedTopicId(null);
+      }
+   };
+
    const dismissNotesPanel = useCallback(() => {
       notesCommitRef.current?.();
       setNotesPanelTopicId(null);
    }, []);
 
+   const dismissLabelPanel = useCallback(() => {
+      labelCommitRef.current?.();
+      setLabelPanelTopicId(null);
+   }, []);
+
+   const dismissEquationPanel = useCallback(() => {
+      equationCommitRef.current?.();
+      setEquationPanelTopicId(null);
+   }, []);
+
+   const dismissTopicPanels = useCallback(() => {
+      dismissNotesPanel();
+      dismissLabelPanel();
+      dismissEquationPanel();
+      setWebLinkModalTopicId(null);
+   }, [dismissNotesPanel, dismissLabelPanel, dismissEquationPanel]);
+
+   const insertTopicAndActivate = useCallback(
+      (
+         recipe: (draft: Sheet, topicId: TopicId) => void,
+         sourceTopicId: TopicId,
+         options?: { commitText?: string },
+      ) => {
+         let insertedTopicId: TopicId | null = null;
+
+         flushSync(() => {
+            dismissTopicPanels();
+            setEquationSelectedTopicId(null);
+            setProjects((current) =>
+               current.map((project) => {
+                  if (project.id !== activeProjectIdRef.current) return project;
+
+                  const activeSheet = project.sheetsById[project.activeSheetId];
+                  if (!activeSheet) return project;
+
+                  const nextSheet = produce(activeSheet, (draft) => {
+                     if (options?.commitText !== undefined) {
+                        const sourceTopic = draft.topicsById[sourceTopicId];
+                        if (sourceTopic) sourceTopic.text = options.commitText;
+                     }
+                     recipe(draft, sourceTopicId);
+                  });
+                  insertedTopicId = findInsertedTopicId(activeSheet, nextSheet);
+
+                  return {
+                     ...project,
+                     sheetsById: {
+                        ...project.sheetsById,
+                        [project.activeSheetId]: nextSheet,
+                     },
+                  };
+               }),
+            );
+
+            if (insertedTopicId) {
+               setSelectedTopicId(insertedTopicId);
+               setEditTopicId(insertedTopicId);
+               setEditingTopicId(insertedTopicId);
+            }
+         });
+
+         return insertedTopicId;
+      },
+      [dismissTopicPanels],
+   );
+
    const openNotesPanel = () => {
-      if (selectedTopicId) setNotesPanelTopicId(selectedTopicId);
+      if (!selectedTopicId) return;
+      dismissLabelPanel();
+      dismissEquationPanel();
+      setWebLinkModalTopicId(null);
+      setEquationSelectedTopicId(null);
+      setNotesPanelTopicId(selectedTopicId);
    };
+
+   const openLabelPanel = () => {
+      if (!selectedTopicId) return;
+      dismissNotesPanel();
+      dismissEquationPanel();
+      setWebLinkModalTopicId(null);
+      setEquationSelectedTopicId(null);
+      setSelectedTopicId(selectedTopicId);
+      setLabelPanelTopicId(selectedTopicId);
+   };
+
+   const openEquationPanel = (topicId?: TopicId) => {
+      const targetId = topicId ?? selectedTopicId;
+      if (!targetId) return;
+      dismissNotesPanel();
+      dismissLabelPanel();
+      setWebLinkModalTopicId(null);
+      setEquationSelectedTopicId(null);
+      setSelectedTopicId(targetId);
+      setEquationPanelTopicId(targetId);
+   };
+
+   const openWebLinkModal = (topicId?: TopicId, kind?: TopicLinkKind) => {
+      const targetId = topicId ?? selectedTopicId;
+      if (!targetId) return;
+      dismissNotesPanel();
+      dismissLabelPanel();
+      dismissEquationPanel();
+      setEquationSelectedTopicId(null);
+      setSelectedTopicId(targetId);
+      const existingKind = sheet?.topicsById[targetId]?.link?.kind;
+      setWebLinkModalKind(kind ?? existingKind ?? 'webpage');
+      setWebLinkModalTopicId(targetId);
+   };
+
+   const handleWebLinkInsert = (link: { url: string }) => {
+      if (!webLinkModalTopicId) return;
+      updateTopicLink(webLinkModalTopicId, { ...link, kind: webLinkModalKind });
+      setWebLinkModalTopicId(null);
+   };
+
+   const openExternalLink = useCallback((url: string) => {
+      if (isExternalLinkConfirmSkipped()) {
+         window.open(url, '_blank', 'noopener,noreferrer');
+         return;
+      }
+      setExternalLinkUrl(url);
+   }, []);
 
    const openNotesPanelFor = (topicId: TopicId) => {
       if (notesPanelTopicId && notesPanelTopicId !== topicId) {
          dismissNotesPanel();
       }
+      if (labelPanelTopicId) dismissLabelPanel();
+      if (equationPanelTopicId) dismissEquationPanel();
+      setWebLinkModalTopicId(null);
+      setEquationSelectedTopicId(null);
       setSelectedTopicId(topicId);
       setNotesPanelTopicId(topicId);
    };
+
+   const openLabelsPanelFor = (topicId: TopicId) => {
+      if (labelPanelTopicId && labelPanelTopicId !== topicId) {
+         dismissLabelPanel();
+      }
+      if (notesPanelTopicId) dismissNotesPanel();
+      if (equationPanelTopicId) dismissEquationPanel();
+      setWebLinkModalTopicId(null);
+      setEquationSelectedTopicId(null);
+      setSelectedTopicId(topicId);
+      setLabelPanelTopicId(topicId);
+   };
+
+   const openEquationPanelFor = (topicId: TopicId) => {
+      if (equationPanelTopicId && equationPanelTopicId !== topicId) {
+         dismissEquationPanel();
+      }
+      if (notesPanelTopicId) dismissNotesPanel();
+      if (labelPanelTopicId) dismissLabelPanel();
+      setWebLinkModalTopicId(null);
+      setEquationSelectedTopicId(null);
+      setSelectedTopicId(topicId);
+      setEquationPanelTopicId(topicId);
+   };
+
+   const webLinkTopic =
+      webLinkModalTopicId != null && sheet
+         ? sheet.topicsById[webLinkModalTopicId]
+         : undefined;
 
    const selectProject = (projectId: string) => {
       const project = projects.find((candidate) => candidate.id === projectId);
@@ -748,6 +1005,10 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                   if (selectedTopicId) insertChildTopic(selectedTopicId);
                }}
                onAddContent={openNotesPanel}
+               onAddLabel={openLabelPanel}
+               onAddWebpage={() => openWebLinkModal(undefined, 'webpage')}
+               onAddCloudStorage={() => openWebLinkModal(undefined, 'cloud')}
+               onAddEquation={() => openEquationPanel()}
                onAddComment={() => {}}
             />
             <Viewport
@@ -759,20 +1020,52 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                onDismissNavHint={dismissNavHint}
                onClearSelection={() => {
                   dismissNotesPanel();
+                  dismissLabelPanel();
+                  dismissEquationPanel();
+                  setWebLinkModalTopicId(null);
+                  setExternalLinkUrl(null);
+                  setEquationSelectedTopicId(null);
                   setSelectedTopicId(null);
                }}
                overlay={
-                  notesScreenAnchor && notesTopic ? (
-                     <TopicNotesPanel
-                        anchor={notesScreenAnchor}
-                        notes={notesTopic.notes ?? ''}
-                        onChange={(notes) => updateTopicNotes(notesTopic.id, notes)}
-                        onClose={dismissNotesPanel}
-                        registerCommit={(commit) => {
-                           notesCommitRef.current = commit;
-                        }}
-                     />
-                  ) : null
+                  <>
+                     {labelScreenAnchor && labelTopic ? (
+                        <TopicLabelPanel
+                           anchor={labelScreenAnchor}
+                           labels={labelTopic.labels ?? []}
+                           autoSort={labelTopic.labelsAutoSort ?? true}
+                           onChange={(labels, labelsAutoSort) =>
+                              updateTopicLabels(labelTopic.id, labels, labelsAutoSort)
+                           }
+                           onClose={dismissLabelPanel}
+                           registerCommit={(commit) => {
+                              labelCommitRef.current = commit;
+                           }}
+                        />
+                     ) : null}
+                     {notesScreenAnchor && notesTopic ? (
+                        <TopicNotesPanel
+                           anchor={notesScreenAnchor}
+                           notes={notesTopic.notes ?? ''}
+                           onChange={(notes) => updateTopicNotes(notesTopic.id, notes)}
+                           onClose={dismissNotesPanel}
+                           registerCommit={(commit) => {
+                              notesCommitRef.current = commit;
+                           }}
+                        />
+                     ) : null}
+                     {equationScreenAnchor && equationTopic ? (
+                        <TopicEquationPanel
+                           anchor={equationScreenAnchor}
+                           initialLatex={equationTopic.equation?.latex ?? ''}
+                           onChange={(latex) => updateTopicEquation(equationTopic.id, latex)}
+                           onClose={dismissEquationPanel}
+                           registerCommit={(commit) => {
+                              equationCommitRef.current = commit;
+                           }}
+                        />
+                     ) : null}
+                  </>
                }
             >
                <MindMapCanvas
@@ -786,10 +1079,34 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                      if (notesPanelTopicId && notesPanelTopicId !== topicId) {
                         dismissNotesPanel();
                      }
+                     if (labelPanelTopicId && labelPanelTopicId !== topicId) {
+                        dismissLabelPanel();
+                     }
+                     if (equationPanelTopicId && equationPanelTopicId !== topicId) {
+                        dismissEquationPanel();
+                     }
+                     if (webLinkModalTopicId && webLinkModalTopicId !== topicId) {
+                        setWebLinkModalTopicId(null);
+                     }
+                     setEquationSelectedTopicId(null);
                      setSelectedTopicId(topicId);
                   }}
                   onTopicTextChange={updateTopicText}
                   onOpenNotesPanel={openNotesPanelFor}
+                  onOpenLabelsPanel={openLabelsPanelFor}
+                  onOpenLink={(_topicId, url) => openExternalLink(url)}
+                  onOpenWebLinkEditor={(topicId) => openWebLinkModal(topicId)}
+                  onDeleteNote={removeTopicNote}
+                  onDeleteLink={removeTopicLink}
+                  equationSelectedTopicId={equationSelectedTopicId}
+                  onEquationSelect={setEquationSelectedTopicId}
+                  onEquationDeselect={() => setEquationSelectedTopicId(null)}
+                  onOpenEquationEditor={openEquationPanelFor}
+                  onEquationScaleChange={updateTopicEquationScale}
+                  onEquationPlacementChange={updateTopicEquationPlacement}
+                  onMoveEquation={moveTopicEquation}
+                  onDeleteEquation={removeTopicEquation}
+                  onDismissTopicPanels={dismissTopicPanels}
                   onToggleCollapse={toggleCollapse}
                />
             </Viewport>
@@ -816,6 +1133,20 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                onZoomChange={setZoom}
             />
          </div>
+         {webLinkModalTopicId && webLinkTopic ? (
+            <InsertWebLinkModal
+               title={webLinkModalKind === 'cloud' ? 'Cloud Storage' : 'Insert Web Link'}
+               initialUrl={webLinkTopic.link?.url ?? ''}
+               onInsert={handleWebLinkInsert}
+               onCancel={() => setWebLinkModalTopicId(null)}
+            />
+         ) : null}
+         {externalLinkUrl ? (
+            <OpenExternalLinkModal
+               url={externalLinkUrl}
+               onCancel={() => setExternalLinkUrl(null)}
+            />
+         ) : null}
       </main>
    );
 }

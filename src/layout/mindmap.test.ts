@@ -1,10 +1,35 @@
 import { describe, expect, it } from 'vitest';
 import { createSampleDocument } from '@/demo/sampleDocument';
-import { createTopic } from '@/core/model/factories';
+import { createSheet, createTopic } from '@/core/model/factories';
 import { edgePath } from './edges';
 import { layoutMindmap } from './mindmap';
 import { MAX_TOPIC_WIDTH, ROOT_MAX_TOPIC_WIDTH, measureTopic } from './measure';
 import { branchColorForIndex } from './theme';
+
+function createBranchWithSiblingsSheet() {
+  const root = createTopic({ id: 'root', text: 'Root' });
+  const branch = createTopic({ id: 'branch', text: 'Branch', parentId: 'root', side: 'right' });
+  const first = createTopic({
+    id: 'first',
+    text: 'Where is the love?',
+    parentId: 'branch',
+  });
+  const second = createTopic({ id: 'second', text: 'Node 2', parentId: 'branch' });
+
+  root.childrenIds = ['branch'];
+  branch.childrenIds = ['first', 'second'];
+
+  return createSheet({
+    title: 'Equation spacing',
+    rootTopicId: 'root',
+    topicsById: {
+      root,
+      branch,
+      first,
+      second,
+    },
+  });
+}
 
 describe('layout engine', () => {
   it('wraps the central topic within the root max width', () => {
@@ -24,6 +49,101 @@ describe('layout engine', () => {
     expect(measurement.lines.length).toBeGreaterThan(1);
     expect(measurement.width).toBeLessThanOrEqual(MAX_TOPIC_WIDTH);
     expect(measurement.height).toBeGreaterThan(measurement.lineHeight);
+  });
+
+  it('keeps a visible minimum size for empty textless topics', () => {
+    const measurement = measureTopic('', 2);
+
+    expect(measurement.width).toBeGreaterThan(20);
+    expect(measurement.height).toBeGreaterThan(measurement.lineHeight);
+  });
+
+  it('pushes sibling topics down when a topic gains a tall equation', () => {
+    const sheet = createBranchWithSiblingsSheet();
+    const before = layoutMindmap(sheet);
+    const firstBefore = before.nodes.get('first')!;
+    const secondBefore = before.nodes.get('second')!;
+
+    sheet.topicsById.first!.equation = {
+      latex: String.raw`\frac{-b \pm \sqrt{b^2-4ac}}{2a}`,
+      placement: 'bottom',
+    };
+
+    const after = layoutMindmap(sheet);
+    const firstAfter = after.nodes.get('first')!;
+    const secondAfter = after.nodes.get('second')!;
+
+    expect(firstAfter.height).toBeGreaterThan(firstBefore.height);
+    expect(secondAfter.y).toBeGreaterThan(secondBefore.y);
+    expect(secondAfter.y).toBeGreaterThanOrEqual(firstAfter.y + firstAfter.height - 1);
+  });
+
+  it('vertically centers a lone child with its parent for a horizontal connector', () => {
+    const sheet = createBranchWithSiblingsSheet();
+    const branch = sheet.topicsById.branch!;
+    branch.childrenIds = ['first'];
+    delete sheet.topicsById.second;
+
+    sheet.topicsById.first!.equation = {
+      latex: String.raw`\frac{-b \pm \sqrt{b^2-4ac}}{2a}`,
+      placement: 'bottom',
+    };
+    sheet.topicsById.first!.text = 'Where is the love?';
+
+    const child = createTopic({
+      id: 'only-child',
+      text: 'New Topic',
+      parentId: 'first',
+    });
+    sheet.topicsById['only-child'] = child;
+    sheet.topicsById.first!.childrenIds = ['only-child'];
+
+    const result = layoutMindmap(sheet);
+    const parent = result.nodes.get('first')!;
+    const onlyChild = result.nodes.get('only-child')!;
+
+    expect(parent.height).toBeGreaterThan(onlyChild.height);
+    expect(onlyChild.y + onlyChild.height / 2).toBeCloseTo(
+      parent.y + parent.height / 2,
+      0,
+    );
+  });
+
+  it('accounts for a parent topic height when spacing its siblings', () => {
+    const root = createTopic({ id: 'root', text: 'Root' });
+    const parent = createTopic({
+      id: 'parent',
+      text: 'Where is the love?',
+      parentId: 'root',
+      side: 'right',
+    });
+    const child = createTopic({ id: 'child', text: 'Child', parentId: 'parent' });
+    const sibling = createTopic({ id: 'sibling', text: 'Node 2', parentId: 'root', side: 'right' });
+
+    root.childrenIds = ['parent', 'sibling'];
+    parent.childrenIds = ['child'];
+
+    const sheet = createSheet({
+      title: 'Parent equation spacing',
+      rootTopicId: 'root',
+      topicsById: { root, parent, child, sibling },
+    });
+
+    const before = layoutMindmap(sheet);
+    const siblingBefore = before.nodes.get('sibling')!;
+
+    parent.equation = {
+      latex: String.raw`\frac{-b \pm \sqrt{b^2-4ac}}{2a}`,
+      placement: 'bottom',
+    };
+
+    const after = layoutMindmap(sheet);
+    const parentAfter = after.nodes.get('parent')!;
+    const siblingAfter = after.nodes.get('sibling')!;
+
+    expect(parentAfter.height).toBeGreaterThan(before.nodes.get('parent')!.height);
+    expect(siblingAfter.y).toBeGreaterThan(siblingBefore.y);
+    expect(siblingAfter.y).toBeGreaterThanOrEqual(parentAfter.y + parentAfter.height - 1);
   });
 
   it('lays out the clustering document with left and right branches', () => {
@@ -336,8 +456,9 @@ describe('layout engine', () => {
     expect(level2Bracket.some((edge) => edge.path.includes(' Q '))).toBe(true);
 
     const level3Bracket = result.edges.filter((edge) => edge.id.startsWith('bracket-d-0-'));
-    expect(level3Bracket.length).toBeGreaterThan(0);
-    expect(level3Bracket.some((edge) => edge.id.includes('stem'))).toBe(true);
+    expect(level3Bracket).toHaveLength(1);
+    expect(level3Bracket[0]!.id).toBe('bracket-d-0-solo');
+    expect(level3Bracket[0]!.path).toMatch(/^M .+ H .+$/);
   });
 
   it('returns non-empty bounds', () => {

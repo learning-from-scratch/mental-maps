@@ -7,12 +7,20 @@ import { ToolbarTooltip } from './ToolbarTooltip';
 interface InsertContentButtonProps {
   hasSelection: boolean;
   onAddNote: () => void;
+  onAddLabel: () => void;
+  onAddWebpage: () => void;
+  onAddCloudStorage: () => void;
+  onAddEquation: () => void;
   onAddComment: () => void;
 }
 
 export function InsertContentButton({
   hasSelection,
   onAddNote,
+  onAddLabel,
+  onAddWebpage,
+  onAddCloudStorage,
+  onAddEquation,
   onAddComment,
 }: InsertContentButtonProps) {
   const [open, setOpen] = useState(false);
@@ -89,6 +97,22 @@ export function InsertContentButton({
         onLinkHover={setLinkSubmenuOpen}
         onNote={() => {
           onAddNote();
+          closeMenu();
+        }}
+        onLabel={() => {
+          onAddLabel();
+          closeMenu();
+        }}
+        onWebpage={() => {
+          onAddWebpage();
+          closeMenu();
+        }}
+        onCloudStorage={() => {
+          onAddCloudStorage();
+          closeMenu();
+        }}
+        onEquation={() => {
+          onAddEquation();
           closeMenu();
         }}
         onComment={() => {

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { createSampleDocument } from '@/demo/sampleDocument';
 import { createTopic } from '@/core/model/factories';
-import { bracketEdges, edgePath, rootEdgePath } from './edges';
+import {
+  bracketChildGap,
+  bracketEdges,
+  collapseHandleCenterX,
+  edgePath,
+  rootEdgePath,
+} from './edges';
 import { layoutMindmap } from './mindmap';
 import type { NodeLayout } from './types';
 
@@ -420,6 +426,95 @@ describe('edge anchoring', () => {
         expect(edge.path).not.toContain(' Q ');
       }
     }
+  });
+
+  it('reserves collapse-handle spacing for level-2 bracket parents', () => {
+    const parent: NodeLayout = {
+      x: 320,
+      y: 80,
+      width: 140,
+      height: 30,
+      side: 'right',
+      lines: ['Subtopic'],
+      fontSize: 14,
+      lineHeight: 20,
+      depth: 2,
+      branchIndex: 0,
+    };
+    const children: NodeLayout[] = [
+      {
+        x: 500,
+        y: 40,
+        width: 100,
+        height: 28,
+        side: 'right',
+        lines: ['A'],
+        fontSize: 14,
+        lineHeight: 20,
+        depth: 3,
+        branchIndex: 0,
+      },
+      {
+        x: 500,
+        y: 120,
+        width: 100,
+        height: 28,
+        side: 'right',
+        lines: ['B'],
+        fontSize: 14,
+        lineHeight: 20,
+        depth: 3,
+        branchIndex: 0,
+      },
+    ];
+
+    const edges = bracketEdges('lvl2', parent, children, parent.branchIndex);
+    const stem = edges.find((edge) => edge.id.includes('stem'))!;
+    const trunkX = parent.x + parent.width + 32;
+
+    expect(stem.path).toBe(`M ${parent.x + parent.width} ${parent.y + parent.height / 2} H ${trunkX}`);
+    expect(bracketChildGap(2, children.length)).toBe(38);
+    expect(edges.some((edge) => edge.id.includes('trunk'))).toBe(true);
+  });
+
+  it('uses a single straight connector for one child', () => {
+    const parent: NodeLayout = {
+      x: 100,
+      y: 40,
+      width: 180,
+      height: 36,
+      side: 'right',
+      lines: ['Parent'],
+      fontSize: 18,
+      lineHeight: 24,
+      depth: 1,
+      branchIndex: 0,
+    };
+    const gap = bracketChildGap(1, 1);
+    const childHeight = 32;
+    const child: NodeLayout = {
+      x: parent.x + parent.width + gap,
+      y: parent.y + parent.height / 2 - childHeight / 2,
+      width: 120,
+      height: childHeight,
+      side: 'right',
+      lines: ['Child'],
+      fontSize: 14,
+      lineHeight: 20,
+      depth: 2,
+      branchIndex: 0,
+    };
+
+    const edges = bracketEdges('solo', parent, [child], parent.branchIndex);
+
+    const parentEdgeX = parent.x + parent.width;
+    const parentMidY = parent.y + parent.height / 2;
+    const childEdgeX = child.x;
+
+    expect(edges).toHaveLength(1);
+    expect(edges[0]!.id).toBe('bracket-solo-solo');
+    expect(edges[0]!.path).toBe(`M ${parentEdgeX} ${parentMidY} H ${childEdgeX}`);
+    expect(collapseHandleCenterX(parent, [child], 1)).toBe(parentEdgeX + gap / 2);
   });
 
   it('right-branch brackets exit the parent right edge toward children', () => {

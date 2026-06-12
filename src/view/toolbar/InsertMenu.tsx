@@ -1,11 +1,10 @@
 import {
   Bookmark,
   ChevronRight,
+  Cloud,
   ExternalLink,
   Globe,
-  ImagePlus,
   MessageSquare,
-  Paperclip,
   Sigma,
   SquarePen,
   Sticker,
@@ -20,6 +19,10 @@ interface InsertMenuProps {
   linkSubmenuOpen: boolean;
   onLinkHover: (open: boolean) => void;
   onNote?: () => void;
+  onLabel?: () => void;
+  onWebpage?: () => void;
+  onCloudStorage?: () => void;
+  onEquation?: () => void;
   onComment?: () => void;
 }
 
@@ -38,10 +41,9 @@ const LINK_ITEMS: MenuItem[] = [
 ];
 
 const OTHER_SECTIONS: MenuItem[][] = [
-  [{ id: 'attachment', label: 'Attachment', icon: <Paperclip {...insertIcon()} /> }],
+  [{ id: 'cloud-storage', label: 'Cloud Storage', icon: <Cloud {...insertIcon()} /> }],
   [
     { id: 'sticker', label: 'Sticker', icon: <Sticker {...insertIcon()} /> },
-    { id: 'local-image', label: 'Local Image', icon: <ImagePlus {...insertIcon()} /> },
     { id: 'equation', label: 'Equation', icon: <Sigma {...insertIcon()} /> },
   ],
 ];
@@ -89,6 +91,10 @@ export function InsertMenu({
   linkSubmenuOpen,
   onLinkHover,
   onNote,
+  onLabel,
+  onWebpage,
+  onCloudStorage,
+  onEquation,
   onComment,
 }: InsertMenuProps) {
   const handleItemClick = (itemId: string) => {
@@ -96,6 +102,21 @@ export function InsertMenu({
 
     if (itemId === 'note') {
       onNote?.();
+      return;
+    }
+
+    if (itemId === 'label') {
+      onLabel?.();
+      return;
+    }
+
+    if (itemId === 'cloud-storage') {
+      onCloudStorage?.();
+      return;
+    }
+
+    if (itemId === 'equation') {
+      onEquation?.();
       return;
     }
 
@@ -132,7 +153,14 @@ export function InsertMenu({
                 {linkSubmenuOpen && !isItemDisabled(item.id, hasSelection) && (
                   <div className="insert-menu__submenu">
                     {LINK_ITEMS.map((linkItem) => (
-                      <button key={linkItem.id} type="button" className="insert-menu__submenu-item">
+                      <button
+                        key={linkItem.id}
+                        type="button"
+                        className="insert-menu__submenu-item"
+                        onClick={() => {
+                          if (linkItem.id === 'webpage') onWebpage?.();
+                        }}
+                      >
                         <MenuRow item={linkItem} />
                       </button>
                     ))}

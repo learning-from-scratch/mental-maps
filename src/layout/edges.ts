@@ -6,34 +6,68 @@ const BEZIER_CONTROL_RATIO = 0.45;
 const COLLAPSE_HANDLE_OUTSET = 28;
 /** Gap between the collapse handle and the vertical bracket trunk. */
 const TRUNK_AFTER_HANDLE = 14;
+/** Single-child branches skip the vertical trunk — only a short gap after the handle. */
+const SOLO_CHILD_TRUNK_GAP = 2;
 /** Corner radius where the trunk turns into each horizontal child branch. */
 const BRACKET_CORNER_RADIUS = 12;
-/** Trunk offset for level-2+ parents (no collapse handle). */
-const NESTED_TRUNK_OUTSET = 8;
 const NESTED_BRACKET_CORNER_RADIUS = 8;
 /** Horizontal run from the trunk to each child node inner edge. */
 export const BRACKET_STUB_LENGTH = 8;
+/** Bracket connectors (level-1 onward) are shorter than the legacy full spacing. */
+const BRACKET_CONNECTOR_SCALE = 0.75;
 
-function bracketMetrics(parentDepth: number): {
+function bracketMetrics(
+  parentDepth: number,
+  childCount?: number,
+): {
   trunkOutset: number;
+  stubLength: number;
   cornerRadius: number;
 } {
-  if (parentDepth <= 1) {
-    return {
-      trunkOutset: COLLAPSE_HANDLE_OUTSET + TRUNK_AFTER_HANDLE,
-      cornerRadius: BRACKET_CORNER_RADIUS,
-    };
-  }
+  const baseTrunkOutset =
+    childCount === 1
+      ? COLLAPSE_HANDLE_OUTSET + SOLO_CHILD_TRUNK_GAP
+      : COLLAPSE_HANDLE_OUTSET + TRUNK_AFTER_HANDLE;
+  const trunkOutset = Math.round(baseTrunkOutset * BRACKET_CONNECTOR_SCALE);
+  const stubLength = Math.round(BRACKET_STUB_LENGTH * BRACKET_CONNECTOR_SCALE);
 
   return {
-    trunkOutset: NESTED_TRUNK_OUTSET,
-    cornerRadius: NESTED_BRACKET_CORNER_RADIUS,
+    trunkOutset,
+    stubLength,
+    cornerRadius: parentDepth <= 1 ? BRACKET_CORNER_RADIUS : NESTED_BRACKET_CORNER_RADIUS,
   };
 }
 
 /** Horizontal gap from parent outer edge to child inner edge for bracket parents. */
-export function bracketChildGap(parentDepth: number): number {
-  return bracketMetrics(parentDepth).trunkOutset + BRACKET_STUB_LENGTH;
+export function bracketChildGap(parentDepth: number, childCount?: number): number {
+  const { trunkOutset, stubLength } = bracketMetrics(parentDepth, childCount);
+  return trunkOutset + stubLength;
+}
+
+/** X coordinate for the center of a collapse handle on a bracket connector. */
+export function collapseHandleCenterX(
+  parent: NodeLayout,
+  children: NodeLayout[],
+  childCount: number,
+): number {
+  const onLeft =
+    children.length > 0
+      ? childIsOnLeft(parent, children[0]!)
+      : parent.side === 'left';
+  const parentEdgeX = onLeft ? parent.x : parent.x + parent.width;
+  const { trunkOutset, stubLength } = bracketMetrics(parent.depth, childCount);
+  const gap = trunkOutset + stubLength;
+
+  if (childCount === 1) {
+    if (children.length === 1) {
+      const childEdgeX = onLeft ? children[0]!.x + children[0]!.width : children[0]!.x;
+      return (parentEdgeX + childEdgeX) / 2;
+    }
+    return onLeft ? parentEdgeX - gap / 2 : parentEdgeX + gap / 2;
+  }
+
+  const trunkX = onLeft ? parentEdgeX - trunkOutset : parentEdgeX + trunkOutset;
+  return (parentEdgeX + trunkX) / 2;
 }
 
 type BracketEdge = { id: string; path: string; color: string; strokeWidth?: number };
@@ -314,7 +348,7 @@ function trunkBranchPath(
 }
 
 function bracketGeometry(parent: NodeLayout, children: NodeLayout[]) {
-  const { trunkOutset, cornerRadius } = bracketMetrics(parent.depth);
+  const { trunkOutset, cornerRadius } = bracketMetrics(parent.depth, children.length);
   const onLeft = childIsOnLeft(parent, children[0]!);
   const parentMidY = parent.y + parent.height / 2;
   const parentEdgeX = onLeft ? parent.x : parent.x + parent.width;
@@ -364,6 +398,18 @@ export function bracketEdges(
     childMidYs,
     cornerRadius,
   } = bracketGeometry(parent, children);
+
+  if (children.length === 1) {
+    const child = sorted[0]!;
+    return [
+      {
+        id: `bracket-${parentId}-solo`,
+        path: `M ${parentEdgeX} ${parentMidY} H ${childEdgeX(child)}`,
+        color,
+        strokeWidth,
+      },
+    ];
+  }
 
   const edges: BracketEdge[] = [
     {

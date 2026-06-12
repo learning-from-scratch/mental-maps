@@ -271,6 +271,7 @@ export function cloneTopicBranch(
       notes: original.notes,
       link: original.link ? { ...original.link } : undefined,
       labels: [...original.labels],
+      labelsAutoSort: original.labelsAutoSort,
       markers: [...original.markers],
       style: original.style ? { ...original.style } : undefined,
     };
