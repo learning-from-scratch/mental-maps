@@ -8,6 +8,7 @@ import {
   edgePath,
   rootEdgePath,
 } from './edges';
+import { connectorStrokeColor, getBranchTheme } from './theme';
 import { layoutMindmap } from './mindmap';
 import type { NodeLayout } from './types';
 
@@ -514,6 +515,8 @@ describe('edge anchoring', () => {
     expect(edges).toHaveLength(1);
     expect(edges[0]!.id).toBe('bracket-solo-solo');
     expect(edges[0]!.path).toBe(`M ${parentEdgeX} ${parentMidY} H ${childEdgeX}`);
+    expect(edges[0]!.color).toBe(connectorStrokeColor(parent.branchIndex));
+    expect(edges[0]!.color).toBe(getBranchTheme(parent.branchIndex).color);
     expect(collapseHandleCenterX(parent, [child], 1)).toBe(parentEdgeX + gap / 2);
   });
 
