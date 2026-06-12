@@ -421,32 +421,6 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       });
    };
 
-   const insertChildTopic = useCallback(
-      (topicId: TopicId, commitText?: string) => {
-         insertTopicAndActivate(
-            (draft, parentId) => {
-               insertChildInDraft(draft, parentId, mapThemeId);
-            },
-            topicId,
-            commitText !== undefined ? { commitText } : undefined,
-         );
-      },
-      [mapThemeId, insertTopicAndActivate],
-   );
-
-   const insertSiblingTopic = useCallback(
-      (topicId: TopicId, commitText?: string) => {
-         insertTopicAndActivate(
-            (draft, siblingId) => {
-               insertSiblingInDraft(draft, siblingId, mapThemeId);
-            },
-            topicId,
-            commitText !== undefined ? { commitText } : undefined,
-         );
-      },
-      [mapThemeId, insertTopicAndActivate],
-   );
-
    const setZoom = useCallback((zoom: number) => {
       const container = document.querySelector('.viewport');
       const width = container?.clientWidth ?? window.innerWidth;
@@ -464,76 +438,6 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
          };
       });
    }, []);
-
-   useEffect(() => {
-      const handleKeyDown = (event: KeyboardEvent) => {
-         if (
-            !sheet ||
-            !selectedTopicId ||
-            editingTopicId ||
-            event.altKey ||
-            event.ctrlKey ||
-            event.metaKey ||
-            event.shiftKey
-         ) {
-            return;
-         }
-
-         const target = event.target;
-         if (
-            target instanceof HTMLInputElement ||
-            target instanceof HTMLTextAreaElement ||
-            target instanceof HTMLSelectElement ||
-            (target instanceof HTMLElement && target.isContentEditable)
-         ) {
-            return;
-         }
-
-         if (event.key !== 'Enter' && event.key !== 'Tab' && event.key !== 'Delete') return;
-
-         event.preventDefault();
-
-         if (event.key === 'Delete') {
-            const selectedTopic = sheet.topicsById[selectedTopicId];
-            if (!selectedTopic) return;
-            if (selectedTopic.id === sheet.rootTopicId) {
-               setSelectedTopicId(selectedTopic.id);
-               return;
-            }
-
-            const nextSelectedTopicId = nextSelectionAfterDelete(sheet, selectedTopicId);
-
-            updateActiveSheet((draft) => {
-               if (!draft.topicsById[selectedTopicId]) return;
-
-               const doc = {
-                  formatVersion: 1 as const,
-                  id: 'keyboard-session',
-                  title: draft.title,
-                  createdAt: Date.now(),
-                  modifiedAt: Date.now(),
-                  sheets: [draft.id],
-                  sheetsById: { [draft.id]: draft },
-               };
-               const ctx = { doc, sheetId: draft.id };
-               deleteTopics(ctx, { topicIds: [selectedTopicId] });
-            });
-
-            setSelectedTopicId(nextSelectedTopicId);
-            return;
-         }
-
-         if (event.key === 'Tab') {
-            insertChildTopic(selectedTopicId);
-            return;
-         }
-
-         insertSiblingTopic(selectedTopicId);
-      };
-
-      window.addEventListener('keydown', handleKeyDown);
-      return () => window.removeEventListener('keydown', handleKeyDown);
-   }, [selectedTopicId, sheet, editingTopicId, equationSelectedTopicId, insertChildTopic, insertSiblingTopic]);
 
    const toggleCollapse = (topicId: TopicId) => {
       updateActiveSheet((draft) => {
@@ -724,6 +628,102 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       },
       [dismissTopicPanels],
    );
+
+   const insertChildTopic = useCallback(
+      (topicId: TopicId, commitText?: string) => {
+         insertTopicAndActivate(
+            (draft, parentId) => {
+               insertChildInDraft(draft, parentId, mapThemeId);
+            },
+            topicId,
+            commitText !== undefined ? { commitText } : undefined,
+         );
+      },
+      [mapThemeId, insertTopicAndActivate],
+   );
+
+   const insertSiblingTopic = useCallback(
+      (topicId: TopicId, commitText?: string) => {
+         insertTopicAndActivate(
+            (draft, siblingId) => {
+               insertSiblingInDraft(draft, siblingId, mapThemeId);
+            },
+            topicId,
+            commitText !== undefined ? { commitText } : undefined,
+         );
+      },
+      [mapThemeId, insertTopicAndActivate],
+   );
+
+   useEffect(() => {
+      const handleKeyDown = (event: KeyboardEvent) => {
+         if (
+            !sheet ||
+            !selectedTopicId ||
+            editingTopicId ||
+            event.altKey ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.shiftKey
+         ) {
+            return;
+         }
+
+         const target = event.target;
+         if (
+            target instanceof HTMLInputElement ||
+            target instanceof HTMLTextAreaElement ||
+            target instanceof HTMLSelectElement ||
+            (target instanceof HTMLElement && target.isContentEditable)
+         ) {
+            return;
+         }
+
+         if (event.key !== 'Enter' && event.key !== 'Tab' && event.key !== 'Delete') return;
+
+         event.preventDefault();
+
+         if (event.key === 'Delete') {
+            const selectedTopic = sheet.topicsById[selectedTopicId];
+            if (!selectedTopic) return;
+            if (selectedTopic.id === sheet.rootTopicId) {
+               setSelectedTopicId(selectedTopic.id);
+               return;
+            }
+
+            const nextSelectedTopicId = nextSelectionAfterDelete(sheet, selectedTopicId);
+
+            updateActiveSheet((draft) => {
+               if (!draft.topicsById[selectedTopicId]) return;
+
+               const doc = {
+                  formatVersion: 1 as const,
+                  id: 'keyboard-session',
+                  title: draft.title,
+                  createdAt: Date.now(),
+                  modifiedAt: Date.now(),
+                  sheets: [draft.id],
+                  sheetsById: { [draft.id]: draft },
+               };
+               const ctx = { doc, sheetId: draft.id };
+               deleteTopics(ctx, { topicIds: [selectedTopicId] });
+            });
+
+            setSelectedTopicId(nextSelectedTopicId);
+            return;
+         }
+
+         if (event.key === 'Tab') {
+            insertChildTopic(selectedTopicId);
+            return;
+         }
+
+         insertSiblingTopic(selectedTopicId);
+      };
+
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+   }, [selectedTopicId, sheet, editingTopicId, insertChildTopic, insertSiblingTopic, updateActiveSheet]);
 
    const openNotesPanel = () => {
       if (!selectedTopicId) return;
@@ -1092,6 +1092,8 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                      setSelectedTopicId(topicId);
                   }}
                   onTopicTextChange={updateTopicText}
+                  onInsertChildAfterEdit={insertChildTopic}
+                  onInsertSiblingAfterEdit={insertSiblingTopic}
                   onOpenNotesPanel={openNotesPanelFor}
                   onOpenLabelsPanel={openLabelsPanelFor}
                   onOpenLink={(_topicId, url) => openExternalLink(url)}
