@@ -9,9 +9,11 @@ interface InsertContentButtonProps {
   onAddNote: () => void;
   onAddLabel: () => void;
   onAddWebpage: () => void;
+  onAddTopicLink: () => void;
   onAddCloudStorage: () => void;
   onAddEquation: () => void;
   onAddComment: () => void;
+  onAddSticker: () => void;
 }
 
 export function InsertContentButton({
@@ -19,9 +21,11 @@ export function InsertContentButton({
   onAddNote,
   onAddLabel,
   onAddWebpage,
+  onAddTopicLink,
   onAddCloudStorage,
   onAddEquation,
   onAddComment,
+  onAddSticker,
 }: InsertContentButtonProps) {
   const [open, setOpen] = useState(false);
   const [linkSubmenuOpen, setLinkSubmenuOpen] = useState(false);
@@ -107,12 +111,20 @@ export function InsertContentButton({
           onAddWebpage();
           closeMenu();
         }}
+        onTopicLink={() => {
+          onAddTopicLink();
+          closeMenu();
+        }}
         onCloudStorage={() => {
           onAddCloudStorage();
           closeMenu();
         }}
         onEquation={() => {
           onAddEquation();
+          closeMenu();
+        }}
+        onSticker={() => {
+          onAddSticker();
           closeMenu();
         }}
         onComment={() => {

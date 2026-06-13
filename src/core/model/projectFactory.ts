@@ -1,6 +1,7 @@
 import { createDocument } from './factories';
+import { migrateLegacyTopicLink } from './link';
 import type { ProjectState } from './project';
-import type { Sheet, SheetId } from './types';
+import type { Sheet, SheetId, Topic } from './types';
 import {
   DEFAULT_MAP_THEME_ID,
   branchColorForIndex,
@@ -12,17 +13,25 @@ type LegacyProjectState = ProjectState & {
   canvasDotsEnabled?: boolean;
 };
 
+export function normalizeTopic(topic: Topic): Topic {
+  const normalized = { ...topic, labels: topic.labels ?? [], markers: topic.markers ?? [] };
+  migrateLegacyTopicLink(normalized);
+  return normalized;
+}
+
 export function normalizeSheet(
   sheet: Sheet,
   projectThemeFallback?: string,
   projectDotsFallback?: boolean,
 ): Sheet {
   const topicsById = Object.fromEntries(
-    Object.entries(sheet.topicsById).map(([id, topic]) => [
-      id,
-      { ...topic, labels: topic.labels ?? [] },
-    ]),
+    Object.entries(sheet.topicsById).map(([id, topic]) => [id, normalizeTopic(topic)]),
   ) as Sheet['topicsById'];
+
+  const root = topicsById[sheet.rootTopicId];
+  if (root?.markers.length) {
+    topicsById[sheet.rootTopicId] = { ...root, markers: [] };
+  }
 
   return {
     ...sheet,

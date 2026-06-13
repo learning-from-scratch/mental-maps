@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid';
+import { clearTopicLinksToTargets } from '../model/link';
 import { createTopic, getSheet, getTopic } from '../model/factories';
 import type { MindMapDocument, Sheet, TopicId } from '../model/types';
 import {
@@ -106,6 +107,11 @@ export function deleteTopics(ctx: CommandContext, payload: DeleteTopicsPayload):
       throw new Error('Cannot delete root topic');
     }
     deleted.push(...deleteTopicSubtree(sheet, topicId));
+  }
+
+  const uniqueDeleted = [...new Set(deleted)];
+  if (uniqueDeleted.length > 0) {
+    clearTopicLinksToTargets(ctx.doc.sheetsById, ctx.sheetId, uniqueDeleted);
   }
 
   touchDocument(ctx.doc);

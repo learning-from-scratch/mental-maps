@@ -58,6 +58,23 @@ describe('layout engine', () => {
     expect(measurement.height).toBeGreaterThan(measurement.lineHeight);
   });
 
+  it('grows node width when stickers are added', () => {
+    const text = 'Uso gd man na bla';
+    const withoutStickers = measureTopic(text, 2);
+    const withStickers = measureTopic(text, 2, undefined, false, undefined, 3);
+
+    expect(withStickers.width).toBeGreaterThan(withoutStickers.width);
+  });
+
+  it('includes sticker row width in stickered topic measurements', () => {
+    const text = 'A'.repeat(45);
+    const capped = measureTopic(text, 2);
+    const stickered = measureTopic(text, 2, undefined, false, undefined, 2);
+
+    expect(stickered.width).toBeGreaterThan(capped.width);
+    expect(capped.width).toBeLessThanOrEqual(MAX_TOPIC_WIDTH);
+  });
+
   it('pushes sibling topics down when a topic gains a tall equation', () => {
     const sheet = createBranchWithSiblingsSheet();
     const before = layoutMindmap(sheet);

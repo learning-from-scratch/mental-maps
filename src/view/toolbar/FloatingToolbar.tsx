@@ -22,9 +22,11 @@ interface FloatingToolbarProps {
   onAddContent: () => void;
   onAddLabel: () => void;
   onAddWebpage: () => void;
+  onAddTopicLink: () => void;
   onAddCloudStorage: () => void;
   onAddEquation: () => void;
   onAddComment: () => void;
+  onAddSticker: () => void;
 }
 
 interface ToolbarButton {
@@ -160,9 +162,11 @@ export function FloatingToolbar({
   onAddContent,
   onAddLabel,
   onAddWebpage,
+  onAddTopicLink,
   onAddCloudStorage,
   onAddEquation,
   onAddComment,
+  onAddSticker,
 }: FloatingToolbarProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [projectOpen, setProjectOpen] = useState(false);
@@ -241,9 +245,11 @@ export function FloatingToolbar({
           onAddNote={onAddContent}
           onAddLabel={onAddLabel}
           onAddWebpage={onAddWebpage}
+          onAddTopicLink={onAddTopicLink}
           onAddCloudStorage={onAddCloudStorage}
           onAddEquation={onAddEquation}
           onAddComment={onAddComment}
+          onAddSticker={onAddSticker}
         />
       </div>
     </div>

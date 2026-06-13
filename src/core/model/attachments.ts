@@ -1,22 +1,44 @@
-import { topicHasLink } from '@/core/model/link';
+import {
+  hasTopicRefLink,
+  hasUrlLink,
+  type TopicRefLink,
+  type UrlLink,
+} from '@/core/model/link';
 import { topicHasNotes } from '@/core/model/notes';
-import type { TopicLink } from '@/core/model/link';
 
 export type TopicAttachmentIndicator = 'none' | 'notes' | 'link' | 'multiple';
 
-export function getTopicAttachmentIndicator(
-  notes?: string,
-  link?: TopicLink,
-): TopicAttachmentIndicator {
-  const hasNotes = topicHasNotes(notes);
-  const hasLink = topicHasLink(link);
-
-  if (hasNotes && hasLink) return 'multiple';
-  if (hasNotes) return 'notes';
-  if (hasLink) return 'link';
-  return 'none';
+export interface TopicLinkAttachments {
+  webLink?: UrlLink;
+  cloudLink?: UrlLink;
+  topicLink?: TopicRefLink;
 }
 
-export function topicShowsAttachmentAffordance(notes?: string, link?: TopicLink): boolean {
-  return getTopicAttachmentIndicator(notes, link) !== 'none';
+export function countTopicAttachments(
+  notes?: string,
+  links?: TopicLinkAttachments,
+): number {
+  let count = 0;
+  if (topicHasNotes(notes)) count += 1;
+  if (hasUrlLink(links?.webLink)) count += 1;
+  if (hasUrlLink(links?.cloudLink)) count += 1;
+  if (hasTopicRefLink(links?.topicLink)) count += 1;
+  return count;
+}
+
+export function getTopicAttachmentIndicator(
+  notes?: string,
+  links?: TopicLinkAttachments,
+): TopicAttachmentIndicator {
+  const count = countTopicAttachments(notes, links);
+  if (count === 0) return 'none';
+  if (count === 1) return topicHasNotes(notes) ? 'notes' : 'link';
+  return 'multiple';
+}
+
+export function topicShowsAttachmentAffordance(
+  notes?: string,
+  links?: TopicLinkAttachments,
+): boolean {
+  return getTopicAttachmentIndicator(notes, links) !== 'none';
 }

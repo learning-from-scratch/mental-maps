@@ -1,5 +1,13 @@
 import { topicHasEquation, equationScale, equationPlacement, topicHasVisibleText } from '@/core/model/equation';
 import { topicShowsAttachmentAffordance } from '@/core/model/attachments';
+import {
+   sortTopicStickers,
+   stickerRowWidth,
+   topicAllowsStickers,
+   topicHasStickers,
+   TOPIC_ATTACHMENT_ICON_SIZE,
+   TOPIC_TEXT_ICON_GAP,
+} from '@/core/model/stickers';
 import type { Sheet, Topic, TopicEquation, TopicId, TopicStyle } from '@/core/model/types';
 import type { NodeMeasurement } from './types';
 import { renderLatex } from '@/lib/katexRender';
@@ -13,12 +21,12 @@ const ROOT_PADDING_X = 20;
 const ROOT_PADDING_Y = 26;
 export const PADDING_X = 14;
 export const PADDING_Y = 10;
-export const CHILD_PADDING_X = 10;
+export const CHILD_PADDING_X = 18;
 export const CHILD_PADDING_Y = 5;
 export const LINE_HEIGHT_RATIO = 1.35;
-/** Icon width (20) + gap before icon (10) in topic-view__content. */
-const NOTES_ICON_AFFORDANCE_WIDTH = 30;
-const MAIN_PADDING_X = 8;
+/** Trailing attachment icon width + text-to-icon gap. */
+const NOTES_ICON_AFFORDANCE_WIDTH = TOPIC_ATTACHMENT_ICON_SIZE + TOPIC_TEXT_ICON_GAP;
+export const MAIN_PADDING_X = 16;
 const EDIT_WIDTH_BUFFER = 6;
 const EQUATION_BASE_HEIGHT = 28;
 const EQUATION_VERTICAL_GAP = 6;
@@ -80,9 +88,11 @@ function resolveTopicWidth(
    contentWidth: number,
    maxWidth: number,
    hasEquation: boolean,
+   stickerCount: number,
 ): number {
    if (hasEquation) return contentWidth;
    if (depth === 0) return Math.min(ROOT_MAX_TOPIC_WIDTH, contentWidth);
+   if (stickerCount > 0) return contentWidth;
    return Math.min(maxWidth, contentWidth);
 }
 
@@ -122,12 +132,13 @@ function measurementKey(
    style: Required<Pick<TopicStyle, 'fontSize' | 'bold'>>,
    depth: number,
    showAttachmentIcon: boolean,
+   stickerCount: number,
    equation?: TopicEquation,
 ): string {
    const eqKey = equation?.latex
       ? `${equation.latex}|${equationScale(equation)}|${equationPlacement(equation)}`
       : '';
-   return `${text}|${style.fontSize}|${style.bold ? 1 : 0}|${depth}|${showAttachmentIcon ? 1 : 0}|${eqKey}`;
+   return `${text}|${style.fontSize}|${style.bold ? 1 : 0}|${depth}|${showAttachmentIcon ? 1 : 0}|${stickerCount}|${eqKey}`;
 }
 
 function estimateCharWidth(fontSize: number, bold: boolean): number {
@@ -320,6 +331,8 @@ export function measureTopicForEdit(
    text: string,
    depth: number,
    styleOverride?: TopicStyle,
+   showAttachmentIcon = false,
+   stickerCount = 0,
 ): NodeMeasurement {
    const depthStyle = styleForDepth(depth);
    const fontSize = styleOverride?.fontSize ?? depthStyle.fontSize;
@@ -329,13 +342,19 @@ export function measureTopicForEdit(
    const lineHeight = fontSize * LINE_HEIGHT_RATIO;
    const ctx = getMeasureContext();
    const displayText = text;
+   const iconAffordance =
+      showAttachmentIcon && depth > 0 ? NOTES_ICON_AFFORDANCE_WIDTH : 0;
+   const stickerAffordance = stickerCount > 0 ? stickerRowWidth(stickerCount) : 0;
+   const innerAffordances = iconAffordance + stickerAffordance;
 
    const charWidth = estimateCharWidth(fontSize, bold);
    const minInnerWidth = Math.ceil(charWidth * 2);
    const lineWidth = measureLineWidth(displayText, depth, fontSize, bold, ctx);
-   const contentWidth = Math.ceil(Math.max(lineWidth, minInnerWidth) + padX * 2 + EDIT_WIDTH_BUFFER);
+   const contentWidth = Math.ceil(
+      Math.max(lineWidth, minInnerWidth) + padX * 2 + innerAffordances + EDIT_WIDTH_BUFFER,
+   );
 
-   if (contentWidth <= maxWidth) {
+   if (contentWidth <= maxWidth || stickerCount > 0) {
       return {
          width: contentWidth,
          height: Math.ceil(lineHeight + padTop + padBottom),
@@ -345,7 +364,7 @@ export function measureTopicForEdit(
       };
    }
 
-   return measureTopic(text, depth, styleOverride, false);
+   return measureTopic(text, depth, styleOverride, showAttachmentIcon, undefined, stickerCount);
 }
 
 export function measureTopic(
@@ -354,12 +373,13 @@ export function measureTopic(
    styleOverride?: TopicStyle,
    showAttachmentIcon = false,
    equation?: TopicEquation,
+   stickerCount = 0,
 ): NodeMeasurement {
    const depthStyle = styleForDepth(depth);
    const fontSize = styleOverride?.fontSize ?? depthStyle.fontSize;
    const bold = styleOverride?.bold ?? depthStyle.bold;
    const style = { fontSize, bold };
-   const key = measurementKey(text, style, depth, showAttachmentIcon, equation);
+   const key = measurementKey(text, style, depth, showAttachmentIcon, stickerCount, equation);
 
    const cached = measureCache.get(key);
    if (cached) return cached;
@@ -369,29 +389,37 @@ export function measureTopic(
    const padTop = depth === 0 ? ROOT_PADDING_Y : depth >= 2 ? CHILD_PADDING_Y : 8;
    const padBottom = depth === 0 ? ROOT_PADDING_Y : depth >= 2 ? CHILD_PADDING_Y : 8;
    const maxWidth = maxTopicWidthForDepth(depth);
-   const maxTextWidth = depth === 0 ? ROOT_WRAP_TEXT_WIDTH : maxWidth - padX * 2;
+   const iconAffordance =
+      showAttachmentIcon && depth > 0 ? NOTES_ICON_AFFORDANCE_WIDTH : 0;
+   const stickerAffordance = stickerCount > 0 ? stickerRowWidth(stickerCount) : 0;
+   const innerAffordances = iconAffordance + stickerAffordance;
+   const maxTextWidth =
+      depth === 0
+         ? ROOT_WRAP_TEXT_WIDTH
+         : Math.max(40, maxWidth - padX * 2 - innerAffordances);
    const lineHeight = fontSize * LINE_HEIGHT_RATIO;
    const ctx = getMeasureContext();
+   const hasVisibleText = topicHasVisibleText(text);
 
    let lines: string[];
-   if (ctx) {
+   let maxLineWidth: number;
+   if (stickerCount > 0 && hasVisibleText) {
+      lines = [text];
+      maxLineWidth = measureLineWidth(text, depth, fontSize, bold, ctx);
+   } else if (ctx) {
       applyMeasureFont(ctx, depth, fontSize, bold);
       lines = wrapTextCanvas(text, maxTextWidth, ctx);
+      maxLineWidth = lines.reduce((max, line) => Math.max(max, ctx.measureText(line).width), 0);
    } else {
       lines = wrapTextEstimate(text, maxTextWidth, fontSize, bold);
+      const charWidth = estimateCharWidth(fontSize, bold);
+      maxLineWidth = lines.reduce((max, line) => Math.max(max, line.length * charWidth), 0);
    }
 
    const charWidth = estimateCharWidth(fontSize, bold);
-   const maxLineWidth = ctx
-      ? lines.reduce((max, line) => Math.max(max, ctx.measureText(line).width), 0)
-      : lines.reduce((max, line) => Math.max(max, line.length * charWidth), 0);
-
-   const iconAffordance =
-      showAttachmentIcon && depth > 0 ? NOTES_ICON_AFFORDANCE_WIDTH : 0;
    const hasEquation = topicHasEquation(equation);
-   const hasVisibleText = topicHasVisibleText(text);
    const equationOnly = hasEquation && !hasVisibleText;
-   const textContentWidth = Math.ceil(maxLineWidth + padX * 2 + iconAffordance);
+   const textContentWidth = Math.ceil(maxLineWidth + padX * 2 + innerAffordances);
 
    const equationBlock = measureEquationBlock(equation, depth);
    const textBlockHeight = hasVisibleText ? lines.length * lineHeight : 0;
@@ -403,7 +431,7 @@ export function measureTopic(
 
    if (!hasVisibleText && !hasEquation) {
       const minInnerWidth = Math.ceil(charWidth * 2);
-      contentWidth = Math.max(contentWidth, minInnerWidth + padX * 2 + iconAffordance);
+      contentWidth = Math.max(contentWidth, minInnerWidth + padX * 2 + innerAffordances);
       contentHeight = Math.max(contentHeight, lineHeight);
    }
 
@@ -413,7 +441,7 @@ export function measureTopic(
          contentHeight = equationBlock.height;
          lines = [];
       } else {
-         const textInnerWidth = Math.ceil(maxLineWidth + iconAffordance);
+         const textInnerWidth = Math.ceil(maxLineWidth + innerAffordances);
          if (isHorizontal) {
             contentWidth = Math.max(
                textContentWidth,
@@ -432,7 +460,7 @@ export function measureTopic(
    }
 
    const measurement: NodeMeasurement = {
-      width: resolveTopicWidth(depth, contentWidth, maxWidth, hasEquation),
+      width: resolveTopicWidth(depth, contentWidth, maxWidth, hasEquation, stickerCount),
       height: Math.ceil(contentHeight + padTop + padBottom),
       lines,
       fontSize,
@@ -452,7 +480,15 @@ export function measureSheet(
 
    for (const [topicId, topic] of Object.entries(sheet.topicsById)) {
       const depth = depthById.get(topicId) ?? 0;
-      const showAttachment = topicShowsAttachmentAffordance(topic.notes, topic.link);
+      const showAttachment = topicShowsAttachmentAffordance(topic.notes, {
+        webLink: topic.webLink,
+        cloudLink: topic.cloudLink,
+        topicLink: topic.topicLink,
+      });
+      const stickerCount =
+         topicAllowsStickers(sheet, topicId) && topicHasStickers(topic.markers)
+            ? sortTopicStickers(topic.markers).length
+            : 0;
       const measurement =
          topicId === editingTopicId
             ? topicHasEquation(topic.equation)
@@ -462,14 +498,16 @@ export function measureSheet(
                     topic.style,
                     showAttachment,
                     topic.equation,
+                    stickerCount,
                  )
-               : measureTopicForEdit(topic.text, depth, topic.style)
+               : measureTopicForEdit(topic.text, depth, topic.style, showAttachment, stickerCount)
             : measureTopic(
                  topic.text,
                  depth,
                  topic.style,
                  showAttachment,
                  topic.equation,
+                 stickerCount,
               );
       measurements.set(topicId, measurement);
    }

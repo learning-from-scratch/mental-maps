@@ -1,9 +1,9 @@
 import {
-  Bookmark,
   ChevronRight,
   Cloud,
   ExternalLink,
   Globe,
+  Link2,
   MessageSquare,
   Sigma,
   SquarePen,
@@ -21,8 +21,10 @@ interface InsertMenuProps {
   onNote?: () => void;
   onLabel?: () => void;
   onWebpage?: () => void;
+  onTopicLink?: () => void;
   onCloudStorage?: () => void;
   onEquation?: () => void;
+  onSticker?: () => void;
   onComment?: () => void;
 }
 
@@ -37,7 +39,7 @@ const insertIcon = (className = 'insert-menu__svg') => appIcon(className);
 
 const LINK_ITEMS: MenuItem[] = [
   { id: 'webpage', label: 'Webpage', icon: <Globe {...insertIcon()} /> },
-  { id: 'topic', label: 'Topic', icon: <Bookmark {...insertIcon()} /> },
+  { id: 'topic', label: 'Topic', icon: <Link2 {...insertIcon()} /> },
 ];
 
 const OTHER_SECTIONS: MenuItem[][] = [
@@ -93,8 +95,10 @@ export function InsertMenu({
   onNote,
   onLabel,
   onWebpage,
+  onTopicLink,
   onCloudStorage,
   onEquation,
+  onSticker,
   onComment,
 }: InsertMenuProps) {
   const handleItemClick = (itemId: string) => {
@@ -117,6 +121,11 @@ export function InsertMenu({
 
     if (itemId === 'equation') {
       onEquation?.();
+      return;
+    }
+
+    if (itemId === 'sticker') {
+      onSticker?.();
       return;
     }
 
@@ -159,6 +168,7 @@ export function InsertMenu({
                         className="insert-menu__submenu-item"
                         onClick={() => {
                           if (linkItem.id === 'webpage') onWebpage?.();
+                          if (linkItem.id === 'topic') onTopicLink?.();
                         }}
                       >
                         <MenuRow item={linkItem} />

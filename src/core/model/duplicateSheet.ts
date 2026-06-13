@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid';
+import { migrateLegacyTopicLink } from './link';
 import type { Sheet, TopicId } from './types';
 
 export function duplicateSheet(source: Sheet, title?: string): Sheet {
@@ -17,8 +18,16 @@ export function duplicateSheet(source: Sheet, title?: string): Sheet {
   const topicsById: Sheet['topicsById'] = {};
   for (const [oldId, topic] of Object.entries(source.topicsById)) {
     const newId = remap(oldId);
+    const cloned = structuredClone(topic);
+    migrateLegacyTopicLink(cloned);
+    if (cloned.topicLink?.targetSheetId === source.id) {
+      cloned.topicLink = {
+        ...cloned.topicLink,
+        targetTopicId: remap(cloned.topicLink.targetTopicId),
+      };
+    }
     topicsById[newId] = {
-      ...structuredClone(topic),
+      ...cloned,
       id: newId,
       parentId: topic.parentId ? remap(topic.parentId) : null,
       childrenIds: topic.childrenIds.map(remap),

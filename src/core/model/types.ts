@@ -1,3 +1,5 @@
+import type { TopicRefLink, UrlLink } from './link';
+
 export type TopicId = string;
 export type SheetId = string;
 export type MarkerId = string;
@@ -35,7 +37,9 @@ export interface Topic {
   side?: 'left' | 'right';
   position?: Vec2;
   notes?: string;
-  link?: { url: string; title?: string; kind?: 'webpage' | 'cloud' };
+  webLink?: UrlLink;
+  cloudLink?: UrlLink;
+  topicLink?: TopicRefLink;
   equation?: TopicEquation;
   labels: string[];
   labelsAutoSort?: boolean;
@@ -75,6 +79,12 @@ export interface LayoutConfig {
   vSpacing: number;
 }
 
+export interface StickerLegendState {
+  visible: boolean;
+  position: Vec2;
+  labelOverrides: Record<MarkerId, string>;
+}
+
 export interface Sheet {
   id: SheetId;
   title: string;
@@ -86,6 +96,7 @@ export interface Sheet {
   summaries: Summary[];
   theme: ThemeRef;
   canvasDotsEnabled?: boolean;
+  stickerLegend?: StickerLegendState;
   layout: LayoutConfig;
 }
 

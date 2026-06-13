@@ -27,7 +27,7 @@ const MAX_ZOOM = 2.5;
 const ZOOM_FACTOR = 1.08;
 
 const INTERACTIVE_SELECTOR =
-  '.topic-view-wrap, .topic-view, .topic-view__notes-button, .topic-view__attachment-button, .topic-view__label-pill, .topic-view__equation, .topic-attachments-menu-wrap, .collapse-handle-wrap, .collapse-handle, .topic-notes-panel-wrap, .topic-equation-panel-wrap, .topic-label-panel-wrap, .floating-toolbar-wrap, .bottom-panel, .theme-sidebar, .viewport__hud';
+  '.topic-view-wrap, .topic-view, .topic-view__notes-button, .topic-view__attachment-button, .topic-stickers__item, .topic-view__label-pill, .topic-view__equation, .topic-attachments-menu-wrap, .topic-sticker-menu-wrap, .sticker-legend, .collapse-handle-wrap, .collapse-handle, .topic-notes-panel-wrap, .topic-equation-panel-wrap, .topic-label-panel-wrap, .floating-toolbar-wrap, .bottom-panel, .right-sidebars, .viewport__hud';
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
   return Boolean((target as HTMLElement | null)?.closest(INTERACTIVE_SELECTOR));

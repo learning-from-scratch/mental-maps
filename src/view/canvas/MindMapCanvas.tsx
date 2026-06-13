@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import type { Sheet, TopicId } from '@/core/model/types';
+import type { Sheet, TopicId, MarkerId, Vec2 } from '@/core/model/types';
+import type { TopicLinkKind } from '@/core/model/link';
+import { collectSheetStickerIds } from '@/core/model/stickers';
 import { collectDescendantIds } from '@/core/commands/tree';
 import { layoutSheet } from '@/layout';
 import { collapseHandleCenterX } from '@/layout/edges';
@@ -7,6 +9,7 @@ import { DEFAULT_MAP_THEME_ID } from '@/layout/theme';
 import { EdgeLayer } from '@/view/edge/EdgeLayer';
 import { CollapseHandle } from '@/view/topic/CollapseHandle';
 import { TopicView } from '@/view/topic/TopicView';
+import { StickerLegend } from '@/view/canvas/StickerLegend';
 import {
    findEquationDropTarget,
    type EquationDragOverlay,
@@ -27,9 +30,20 @@ interface MindMapCanvasProps {
    onOpenNotesPanel: (topicId: TopicId) => void;
    onOpenLabelsPanel: (topicId: TopicId) => void;
    onOpenLink: (topicId: TopicId, url: string) => void;
-   onOpenWebLinkEditor: (topicId: TopicId) => void;
+   onFollowTopicLink: (topicId: TopicId) => void;
+   onOpenWebLinkEditor: (topicId: TopicId, kind?: TopicLinkKind) => void;
+   onOpenTopicLinkEditor: (topicId: TopicId) => void;
    onDeleteNote: (topicId: TopicId) => void;
-   onDeleteLink: (topicId: TopicId) => void;
+   onDeleteWebLink: (topicId: TopicId) => void;
+   onDeleteCloudLink: (topicId: TopicId) => void;
+   onDeleteTopicLink: (topicId: TopicId) => void;
+   onSelectSticker?: (topicId: TopicId, stickerId: MarkerId) => void;
+   stickerLegendVisible?: boolean;
+   stickerLegendPosition?: Vec2;
+   stickerLegendLabels?: Record<MarkerId, string>;
+   viewportZoom?: number;
+   onStickerLegendPositionChange?: (position: Vec2) => void;
+   onStickerLegendLabelChange?: (markerId: MarkerId, label: string) => void;
    equationSelectedTopicId?: TopicId | null;
    onEquationSelect?: (topicId: TopicId) => void;
    onEquationDeselect?: () => void;
@@ -45,6 +59,7 @@ interface MindMapCanvasProps {
    onDeleteEquation?: (topicId: TopicId) => void;
    onDismissTopicPanels?: () => void;
    onToggleCollapse: (topicId: TopicId) => void;
+   resolveTopicLinkLabel?: (topicId: TopicId) => string | undefined;
 }
 
 export function MindMapCanvas({
@@ -61,9 +76,20 @@ export function MindMapCanvas({
    onOpenNotesPanel,
    onOpenLabelsPanel,
    onOpenLink,
+   onFollowTopicLink,
    onOpenWebLinkEditor,
+   onOpenTopicLinkEditor,
    onDeleteNote,
-   onDeleteLink,
+   onDeleteWebLink,
+   onDeleteCloudLink,
+   onDeleteTopicLink,
+   onSelectSticker,
+   stickerLegendVisible = false,
+   stickerLegendPosition = { x: 24, y: 24 },
+   stickerLegendLabels = {},
+   viewportZoom = 1,
+   onStickerLegendPositionChange,
+   onStickerLegendLabelChange,
    equationSelectedTopicId = null,
    onEquationSelect,
    onEquationDeselect,
@@ -74,6 +100,7 @@ export function MindMapCanvas({
    onDeleteEquation,
    onDismissTopicPanels,
    onToggleCollapse,
+   resolveTopicLinkLabel,
 }: MindMapCanvasProps) {
    const [liveEdit, setLiveEdit] = useState<{ topicId: TopicId; text: string } | null>(null);
    const [liveEquationScale, setLiveEquationScale] = useState<{
@@ -258,6 +285,7 @@ export function MindMapCanvas({
       y: -layout.bounds.y,
    };
    const rootLayout = layout.nodes.get(sheet.rootTopicId);
+   const legendStickerIds = useMemo(() => collectSheetStickerIds(sheet), [sheet]);
    return (
       <div
          className="mindmap-canvas"
@@ -285,9 +313,13 @@ export function MindMapCanvas({
                   topicId={topicId}
                   text={sheet.topicsById[topicId]?.text ?? ''}
                   notes={sheet.topicsById[topicId]?.notes}
-                  link={sheet.topicsById[topicId]?.link}
+                  webLink={sheet.topicsById[topicId]?.webLink}
+                  cloudLink={sheet.topicsById[topicId]?.cloudLink}
+                  topicLink={sheet.topicsById[topicId]?.topicLink}
+                  linkLabel={resolveTopicLinkLabel?.(topicId)}
                   equation={sheet.topicsById[topicId]?.equation}
                   labels={sheet.topicsById[topicId]?.labels ?? []}
+                  markers={sheet.topicsById[topicId]?.markers ?? []}
                   layout={nodeLayout}
                   themeId={themeId}
                   selected={topicId === selectedTopicId}
@@ -302,9 +334,14 @@ export function MindMapCanvas({
                   onOpenNotes={onOpenNotesPanel}
                   onOpenLabels={onOpenLabelsPanel}
                   onOpenLink={onOpenLink}
+                  onFollowTopicLink={onFollowTopicLink}
                   onOpenWebLinkEditor={onOpenWebLinkEditor}
+                  onOpenTopicLinkEditor={onOpenTopicLinkEditor}
                   onDeleteNote={onDeleteNote}
-                  onDeleteLink={onDeleteLink}
+                  onDeleteWebLink={onDeleteWebLink}
+                  onDeleteCloudLink={onDeleteCloudLink}
+                  onDeleteTopicLink={onDeleteTopicLink}
+                  onSelectSticker={onSelectSticker}
                   equationSelected={topicId === equationSelectedTopicId}
                   onEquationSelect={onEquationSelect}
                   onEquationDeselect={onEquationDeselect}
@@ -327,6 +364,19 @@ export function MindMapCanvas({
                   }
                />
             ))}
+            {stickerLegendVisible && legendStickerIds.length > 0 ? (
+               <StickerLegend
+                  markerIds={legendStickerIds}
+                  themeId={themeId}
+                  position={stickerLegendPosition}
+                  labelOverrides={stickerLegendLabels}
+                  zoom={viewportZoom}
+                  onPositionChange={(position) => onStickerLegendPositionChange?.(position)}
+                  onLabelChange={(markerId, label) =>
+                     onStickerLegendLabelChange?.(markerId, label)
+                  }
+               />
+            ) : null}
             {collapseHandles.map(
                ({ topicId, nodeLayout, topic, descendantCount, centerX }) => (
                   <CollapseHandle

@@ -1,3 +1,4 @@
+import { produce } from 'immer';
 import { describe, expect, it } from 'vitest';
 import { createDocument, getSheet } from '../model/factories';
 import { validate } from '../model/validate';
@@ -121,6 +122,27 @@ describe('deleteTopics cascade', () => {
     executeCommand(state, 'deleteTopics', { topicIds: [a] });
 
     expect(getSheet(state.doc, sheetId(state)).relationships).toEqual([]);
+  });
+
+  it('removes topic links that point at deleted topics', () => {
+    const state = createDocumentState(createDocument());
+    const sheet = getSheet(state.doc, sheetId(state));
+    const rootId = sheet.rootTopicId;
+
+    const target = executeCommand(state, 'addChild', { parentId: rootId, text: 'Target' });
+    const linker = executeCommand(state, 'addChild', { parentId: rootId, text: 'Linker' });
+
+    produce(state.doc, (draft) => {
+      const draftSheet = draft.sheetsById[sheetId(state)]!;
+      draftSheet.topicsById[linker]!.topicLink = {
+        targetSheetId: draftSheet.id,
+        targetTopicId: target,
+      };
+    });
+
+    executeCommand(state, 'deleteTopics', { topicIds: [target] });
+
+    expect(getSheet(state.doc, sheetId(state)).topicsById[linker]?.topicLink).toBeUndefined();
   });
 
   it('rejects deleting the root topic', () => {

@@ -1,4 +1,4 @@
-import { AlignLeft, Cloud, ExternalLink, MoreHorizontal } from 'lucide-react';
+import { AlignLeft, Cloud, ExternalLink, Link2, MoreHorizontal } from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -10,6 +10,12 @@ import {
 } from 'react';
 import { getTopicAttachmentIndicator } from '@/core/model/attachments';
 import {
+  soleLinkKind,
+  type TopicLinkKind,
+  type TopicRefLink,
+  type UrlLink,
+} from '@/core/model/link';
+import {
   equationPlacement,
   equationScale,
   equationLayoutAreaStyle,
@@ -19,10 +25,12 @@ import {
   topicIsEquationOnly,
 } from '@/core/model/equation';
 import { topicHasLabels } from '@/core/model/labels';
-import { topicLinkKind, type TopicLink } from '@/core/model/link';
-import type { TopicEquation, TopicId } from '@/core/model/types';
+import { sortTopicStickers, stickerRowWidth, topicHasStickers } from '@/core/model/stickers';
+import type { TopicEquation, TopicId, MarkerId } from '@/core/model/types';
 import { TopicAttachmentsMenu } from '@/view/topic/TopicAttachmentsMenu';
 import { TopicEquationDisplay } from '@/view/topic/TopicEquationDisplay';
+import { TopicStickerMenu } from '@/view/topic/TopicStickerMenu';
+import { TopicStickers } from '@/view/topic/TopicStickers';
 import type { EquationDragOverlay } from '@/view/topic/equationDropTarget';
 import { TopicEquationGrid } from '@/view/topic/TopicEquationGrid';
 import { renderLatex } from '@/lib/katexRender';
@@ -68,9 +76,12 @@ interface TopicViewProps {
   topicId: TopicId;
   text: string;
   notes?: string;
-  link?: TopicLink;
+  webLink?: UrlLink;
+  cloudLink?: UrlLink;
+  topicLink?: TopicRefLink;
   equation?: TopicEquation;
   labels?: string[];
+  markers?: MarkerId[];
   layout: NodeLayout;
   themeId?: string;
   selected?: boolean;
@@ -85,9 +96,13 @@ interface TopicViewProps {
   onOpenNotes?: (topicId: TopicId) => void;
   onOpenLabels?: (topicId: TopicId) => void;
   onOpenLink?: (topicId: TopicId, url: string) => void;
-  onOpenWebLinkEditor?: (topicId: TopicId) => void;
+  onFollowTopicLink?: (topicId: TopicId) => void;
+  onOpenWebLinkEditor?: (topicId: TopicId, kind?: TopicLinkKind) => void;
+  onOpenTopicLinkEditor?: (topicId: TopicId) => void;
   onDeleteNote?: (topicId: TopicId) => void;
-  onDeleteLink?: (topicId: TopicId) => void;
+  onDeleteWebLink?: (topicId: TopicId) => void;
+  onDeleteCloudLink?: (topicId: TopicId) => void;
+  onDeleteTopicLink?: (topicId: TopicId) => void;
   equationSelected?: boolean;
   onEquationSelect?: (topicId: TopicId) => void;
   onEquationDeselect?: () => void;
@@ -98,7 +113,9 @@ interface TopicViewProps {
   onEquationDragEnd?: (topicId: TopicId, clientX: number, clientY: number) => void;
   equationDragOverlay?: EquationDragOverlay | null;
   onDeleteEquation?: (topicId: TopicId) => void;
+  linkLabel?: string;
   onDismissTopicPanels?: () => void;
+  onSelectSticker?: (topicId: TopicId, stickerId: MarkerId) => void;
   showsCollapseHandle?: boolean;
   onCollapseHandleHoverChange?: (hovered: boolean) => void;
 }
@@ -107,9 +124,12 @@ export function TopicView({
   topicId,
   text,
   notes,
-  link,
+  webLink,
+  cloudLink,
+  topicLink,
   equation,
   labels = [],
+  markers = [],
   layout,
   themeId = DEFAULT_MAP_THEME_ID,
   selected = false,
@@ -123,10 +143,15 @@ export function TopicView({
   onLiveTextChange,
   onOpenNotes,
   onOpenLabels,
+  linkLabel,
   onOpenLink,
+  onFollowTopicLink,
   onOpenWebLinkEditor,
+  onOpenTopicLinkEditor,
   onDeleteNote,
-  onDeleteLink,
+  onDeleteWebLink,
+  onDeleteCloudLink,
+  onDeleteTopicLink,
   equationSelected = false,
   onEquationSelect,
   onEquationDeselect,
@@ -138,11 +163,16 @@ export function TopicView({
   equationDragOverlay = null,
   onDeleteEquation,
   onDismissTopicPanels,
+  onSelectSticker,
   showsCollapseHandle = false,
   onCollapseHandleHoverChange,
 }: TopicViewProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [attachmentsMenuOpen, setAttachmentsMenuOpen] = useState(false);
+  const [stickerMenu, setStickerMenu] = useState<{
+    markerId: MarkerId;
+    caretLeft: number;
+  } | null>(null);
   const [draftText, setDraftText] = useState(text);
   const [editWidthExtra, setEditWidthExtra] = useState(0);
   const editorRef = useRef<HTMLTextAreaElement>(null);
@@ -197,8 +227,42 @@ export function TopicView({
   }, [isEditing, onEditingChange]);
 
   useEffect(() => {
-    if (!selected) setAttachmentsMenuOpen(false);
+    if (!selected) {
+      setAttachmentsMenuOpen(false);
+      setStickerMenu(null);
+    }
   }, [selected]);
+
+  const attachmentButtonRef = useRef<HTMLButtonElement>(null);
+  const topicWrapRef = useRef<HTMLDivElement>(null);
+  const [attachmentsMenuCaretLeft, setAttachmentsMenuCaretLeft] = useState<number | null>(null);
+
+  const updateAttachmentsMenuCaret = useCallback(() => {
+    const button = attachmentButtonRef.current;
+    const wrap = topicWrapRef.current;
+    if (!button || !wrap) return;
+    const buttonRect = button.getBoundingClientRect();
+    const wrapRect = wrap.getBoundingClientRect();
+    setAttachmentsMenuCaretLeft(
+      buttonRect.left + buttonRect.width / 2 - wrapRect.left,
+    );
+  }, []);
+
+  const openStickerMenu = useCallback(
+    (markerId: MarkerId, element: HTMLElement) => {
+      const wrap = topicWrapRef.current;
+      if (!wrap) return;
+      const stickerRect = element.getBoundingClientRect();
+      const wrapRect = wrap.getBoundingClientRect();
+      onSelect?.(topicId);
+      setAttachmentsMenuOpen(false);
+      setStickerMenu({
+        markerId,
+        caretLeft: stickerRect.left + stickerRect.width / 2 - wrapRect.left,
+      });
+    },
+    [onSelect, topicId],
+  );
 
   const selectAllOnEditRef = useRef(false);
 
@@ -207,6 +271,7 @@ export function TopicView({
       onSelect?.(topicId);
       onDismissTopicPanels?.();
       setAttachmentsMenuOpen(false);
+      setStickerMenu(null);
       setDraftText(text);
       selectAllOnEditRef.current = options?.selectAll ?? false;
       editCaretRef.current = options?.caretIndex ?? null;
@@ -324,10 +389,15 @@ export function TopicView({
       fontSize: `${equationScale(equationDragOverlay.equation)}em`,
     };
   }, [equationDragOverlay, showEquationDragGhost]);
-  const attachmentIndicator = getTopicAttachmentIndicator(notes, link);
-  const linkKind = topicLinkKind(link);
-  const hasLabels = topicHasLabels(labels);
+  const linkAttachments = useMemo(
+    () => ({ webLink, cloudLink, topicLink }),
+    [webLink, cloudLink, topicLink],
+  );
+  const attachmentIndicator = getTopicAttachmentIndicator(notes, linkAttachments);
+  const singleLinkKind = soleLinkKind(linkAttachments);
   const isRoot = layout.depth === 0;
+  const hasLabels = topicHasLabels(labels);
+  const hasStickers = !isRoot && topicHasStickers(markers);
   const isMain = layout.depth === 1;
   const isLevel2 = layout.depth === 2;
   const isDeepChild = layout.depth >= 3;
@@ -351,13 +421,38 @@ export function TopicView({
     onEditingChange?.(false);
   };
 
+  const stickerCount = hasStickers ? sortTopicStickers(markers).length : 0;
+  const showAttachmentForMeasure =
+    attachmentIndicator !== 'none' && !isRoot && !hasEquation;
+
   const editMeasurement = useMemo(() => {
     if (!isEditing) return null;
     if (hasEquation && equation) {
-      return measureTopic(draftText, layout.depth, undefined, false, equation);
+      return measureTopic(
+        draftText,
+        layout.depth,
+        undefined,
+        showAttachmentForMeasure,
+        equation,
+        stickerCount,
+      );
     }
-    return measureTopicForEdit(draftText, layout.depth, undefined);
-  }, [isEditing, hasEquation, equation, draftText, layout.depth]);
+    return measureTopicForEdit(
+      draftText,
+      layout.depth,
+      undefined,
+      showAttachmentForMeasure,
+      stickerCount,
+    );
+  }, [
+    isEditing,
+    hasEquation,
+    equation,
+    draftText,
+    layout.depth,
+    showAttachmentForMeasure,
+    stickerCount,
+  ]);
 
   const measuredEditWidth = editMeasurement?.width ?? layout.width;
   const boxWidth = measuredEditWidth + editWidthExtra;
@@ -379,14 +474,23 @@ export function TopicView({
     editor.scrollTop = 0;
 
     const padX = horizontalPadForDepth(layout.depth);
-    const neededOuter = editor.scrollWidth + padX * 2;
+    const stickerAffordance = stickerCount > 0 ? stickerRowWidth(stickerCount) : 0;
+    const neededOuter = editor.scrollWidth + padX * 2 + stickerAffordance;
     setEditWidthExtra(Math.max(0, neededOuter - measuredEditWidth));
 
     if (!isSingleLineEdit) {
       editor.style.height = 'auto';
       editor.style.height = `${editor.scrollHeight}px`;
     }
-  }, [isEditing, isSingleLineEdit, draftText, measuredEditWidth, boxHeight, layout.depth]);
+  }, [isEditing, isSingleLineEdit, draftText, measuredEditWidth, boxHeight, layout.depth, stickerCount]);
+
+  useLayoutEffect(() => {
+    if (!attachmentsMenuOpen) {
+      setAttachmentsMenuCaretLeft(null);
+      return;
+    }
+    updateAttachmentsMenuCaret();
+  }, [attachmentsMenuOpen, updateAttachmentsMenuCaret, boxWidth, layout.width]);
 
   const wrapClassName = [
     'topic-view-wrap',
@@ -444,6 +548,7 @@ export function TopicView({
 
   return (
     <div
+      ref={topicWrapRef}
       className={wrapClassName}
       data-collapse-topic={showsCollapseHandle ? topicId : undefined}
       style={{ left: layout.x, top: layout.y }}
@@ -530,6 +635,13 @@ export function TopicView({
             onDelete={() => onDeleteEquation?.(topicId)}
             onDeselect={() => onEquationDeselect?.()}
             gridStyle={showSplitLayout ? equationLayoutStyle : undefined}
+          />
+        ) : null}
+        {hasStickers ? (
+          <TopicStickers
+            markers={markers}
+            themeId={themeId}
+            onStickerClick={!isEditing && !isRoot ? openStickerMenu : undefined}
           />
         ) : null}
         {isEditing ? (
@@ -639,6 +751,7 @@ export function TopicView({
         ) : null}
         {attachmentIndicator !== 'none' && !isEditing && !isRoot && !hasEquation ? (
           <button
+            ref={attachmentButtonRef}
             type="button"
             className={`topic-view__attachment-button${
               attachmentIndicator === 'multiple' ? ' topic-view__attachment-button--multiple' : ''
@@ -647,9 +760,11 @@ export function TopicView({
               attachmentIndicator === 'multiple'
                 ? 'View attachments'
                 : attachmentIndicator === 'link'
-                  ? linkKind === 'cloud'
-                    ? 'Open cloud storage link'
-                    : 'Open webpage link'
+                  ? singleLinkKind === 'topic'
+                    ? 'Go to linked topic'
+                    : singleLinkKind === 'cloud'
+                      ? 'Open cloud storage link'
+                      : 'Open webpage link'
                   : 'Open notes'
             }
             onPointerDown={(event) => event.stopPropagation()}
@@ -667,14 +782,26 @@ export function TopicView({
                 onOpenNotes?.(topicId);
                 return;
               }
-              if (link?.url) onOpenLink?.(topicId, link.url);
+              if (singleLinkKind === 'topic') {
+                onFollowTopicLink?.(topicId);
+                return;
+              }
+              if (singleLinkKind === 'cloud' && cloudLink?.url) {
+                onOpenLink?.(topicId, cloudLink.url);
+                return;
+              }
+              if (singleLinkKind === 'webpage' && webLink?.url) {
+                onOpenLink?.(topicId, webLink.url);
+              }
             }}
           >
             {attachmentIndicator === 'multiple' ? (
               <MoreHorizontal {...appIcon('topic-view__attachment-icon')} />
             ) : attachmentIndicator === 'link' ? (
-              linkKind === 'cloud' ? (
+              singleLinkKind === 'cloud' ? (
                 <Cloud {...appIcon('topic-view__attachment-icon')} />
+              ) : singleLinkKind === 'topic' ? (
+                <Link2 {...appIcon('topic-view__attachment-icon')} />
               ) : (
                 <ExternalLink {...appIcon('topic-view__attachment-icon')} />
               )
@@ -685,24 +812,56 @@ export function TopicView({
         ) : null}
       </div>
       </div>
+      {stickerMenu && !isEditing && !isRoot && onSelectSticker ? (
+        <TopicStickerMenu
+          activeMarkerId={stickerMenu.markerId}
+          themeId={themeId}
+          caretLeft={stickerMenu.caretLeft}
+          onSelectSticker={(stickerId) => onSelectSticker(topicId, stickerId)}
+          onDelete={() => onSelectSticker(topicId, stickerMenu.markerId)}
+          onClose={() => setStickerMenu(null)}
+        />
+      ) : null}
       {attachmentsMenuOpen && attachmentIndicator === 'multiple' && !isEditing && !isRoot ? (
         <TopicAttachmentsMenu
           notes={notes}
-          link={link}
+          webLink={webLink}
+          cloudLink={cloudLink}
+          topicLink={topicLink}
+          topicLinkLabel={linkLabel}
+          caretLeft={attachmentsMenuCaretLeft ?? undefined}
           onEditNote={() => {
             setAttachmentsMenuOpen(false);
             onOpenNotes?.(topicId);
           }}
-          onEditLink={() => {
+          onEditWebLink={() => {
             setAttachmentsMenuOpen(false);
-            onOpenWebLinkEditor?.(topicId);
+            onOpenWebLinkEditor?.(topicId, 'webpage');
           }}
-          onOpenLink={(url) => {
+          onEditCloudLink={() => {
+            setAttachmentsMenuOpen(false);
+            onOpenWebLinkEditor?.(topicId, 'cloud');
+          }}
+          onEditTopicLink={() => {
+            setAttachmentsMenuOpen(false);
+            onOpenTopicLinkEditor?.(topicId);
+          }}
+          onOpenWebLink={(url) => {
             setAttachmentsMenuOpen(false);
             onOpenLink?.(topicId, url);
           }}
+          onOpenCloudLink={(url) => {
+            setAttachmentsMenuOpen(false);
+            onOpenLink?.(topicId, url);
+          }}
+          onFollowTopicLink={() => {
+            setAttachmentsMenuOpen(false);
+            onFollowTopicLink?.(topicId);
+          }}
           onDeleteNote={() => onDeleteNote?.(topicId)}
-          onDeleteLink={() => onDeleteLink?.(topicId)}
+          onDeleteWebLink={() => onDeleteWebLink?.(topicId)}
+          onDeleteCloudLink={() => onDeleteCloudLink?.(topicId)}
+          onDeleteTopicLink={() => onDeleteTopicLink?.(topicId)}
           onClose={() => setAttachmentsMenuOpen(false)}
         />
       ) : null}
