@@ -19,13 +19,14 @@ interface FloatingToolbarProps {
   onCreateProject: () => void;
   onInsertSibling: () => void;
   onInsertChild: () => void;
+  onAddRelationship: () => void;
+  relationshipModeActive?: boolean;
   onAddContent: () => void;
   onAddLabel: () => void;
   onAddWebpage: () => void;
   onAddTopicLink: () => void;
   onAddCloudStorage: () => void;
   onAddEquation: () => void;
-  onAddComment: () => void;
   onAddSticker: () => void;
 }
 
@@ -36,6 +37,7 @@ interface ToolbarButton {
   description: string;
   shortcut?: string;
   disabled?: boolean;
+  active?: boolean;
   onClick?: () => void;
 }
 
@@ -56,7 +58,7 @@ function ToolbarButtonItem({
     >
       <button
         type="button"
-        className={`toolbar__button ${button.disabled ? 'toolbar__button--disabled' : ''}`}
+        className={`toolbar__button${button.disabled ? ' toolbar__button--disabled' : ''}${button.active ? ' toolbar__button--active' : ''}`}
         disabled={button.disabled}
         aria-label={button.description}
         onClick={() => button.onClick?.()}
@@ -159,13 +161,14 @@ export function FloatingToolbar({
   onCreateProject,
   onInsertSibling,
   onInsertChild,
+  onAddRelationship,
+  relationshipModeActive = false,
   onAddContent,
   onAddLabel,
   onAddWebpage,
   onAddTopicLink,
   onAddCloudStorage,
   onAddEquation,
-  onAddComment,
   onAddSticker,
 }: FloatingToolbarProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -199,7 +202,8 @@ export function FloatingToolbar({
       title: 'Relationship',
       shortcut: 'Ctrl Shift R',
       description: 'Create a relationship between the two topics',
-      disabled: hasSelection && !canUseStructureTools,
+      active: relationshipModeActive,
+      onClick: onAddRelationship,
     },
     {
       id: 'summary',
@@ -248,7 +252,6 @@ export function FloatingToolbar({
           onAddTopicLink={onAddTopicLink}
           onAddCloudStorage={onAddCloudStorage}
           onAddEquation={onAddEquation}
-          onAddComment={onAddComment}
           onAddSticker={onAddSticker}
         />
       </div>

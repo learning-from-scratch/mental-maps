@@ -53,6 +53,10 @@ export interface Relationship {
   toId: TopicId;
   label?: string;
   style?: { color?: string; lineStyle?: 'dashed' | 'solid' };
+  /** Normalized anchor on the from-node bounding box (0-1). */
+  fromAnchor?: Vec2;
+  /** Normalized anchor on the to-node bounding box (0-1). */
+  toAnchor?: Vec2;
   controlOffsets?: [Vec2, Vec2];
 }
 

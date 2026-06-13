@@ -16,7 +16,8 @@ import {
    createTopicLinkRef,
    topicDisplayText,
 } from '@/core/model/link';
-import type { Sheet, SheetId, TopicId, MarkerId, Vec2 } from '@/core/model/types';
+import type { Sheet, SheetId, TopicId, MarkerId, Vec2, Relationship } from '@/core/model/types';
+import { createRelationship } from '@/core/model/relationships';
 import { createSampleDocument } from '@/demo/sampleDocument';
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
 import {
@@ -34,6 +35,7 @@ import {
 } from '@/prefs/viewportNavHint';
 import { createMap, listMaps, loadMap, saveMap } from '@/persistence/maps';
 import { MindMapCanvas } from '@/view/canvas/MindMapCanvas';
+import type { RelationshipDraft } from '@/view/relationship/RelationshipLayer';
 import { Viewport, type ViewportState } from '@/view/canvas/Viewport';
 import { isExternalLinkConfirmSkipped } from '@/prefs/externalLinkConfirm';
 import {
@@ -244,6 +246,9 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       zoom: 1,
    }));
    const [showNavHint, setShowNavHint] = useState(() => !isViewportNavHintDismissed());
+   const [relationshipMode, setRelationshipMode] = useState<'pick-start' | 'pick-end' | null>(null);
+   const [relationshipDraft, setRelationshipDraft] = useState<RelationshipDraft | null>(null);
+   const [selectedRelationshipId, setSelectedRelationshipId] = useState<string | null>(null);
 
    const dismissNavHint = useCallback(() => {
       setShowNavHint(false);
@@ -788,6 +793,94 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       [mapThemeId, insertTopicAndActivate],
    );
 
+   const cancelRelationshipMode = useCallback(() => {
+      setRelationshipMode(null);
+      setRelationshipDraft(null);
+   }, []);
+
+   const startRelationshipMode = useCallback(() => {
+      dismissTopicPanels();
+      setWebLinkModalTopicId(null);
+      setTopicLinkModalTopicId(null);
+      setEquationSelectedTopicId(null);
+      setSelectedRelationshipId(null);
+
+      if (selectedTopicId) {
+         setRelationshipMode('pick-end');
+         setRelationshipDraft({ fromId: selectedTopicId, cursor: { x: 0, y: 0 } });
+         return;
+      }
+
+      setRelationshipMode('pick-start');
+      setRelationshipDraft(null);
+   }, [selectedTopicId, dismissTopicPanels]);
+
+   const handleRelationshipTopicClick = useCallback(
+      (topicId: TopicId) => {
+         if (relationshipMode === 'pick-start') {
+            setRelationshipMode('pick-end');
+            setRelationshipDraft({ fromId: topicId, cursor: { x: 0, y: 0 } });
+            setSelectedTopicId(topicId);
+            return;
+         }
+
+         if (relationshipMode === 'pick-end' && relationshipDraft) {
+            if (topicId === relationshipDraft.fromId) return;
+
+            const relationship = createRelationship(relationshipDraft.fromId, topicId);
+            updateActiveSheet((draft) => {
+               draft.relationships.push(relationship);
+            });
+            setSelectedRelationshipId(relationship.id);
+            setRelationshipMode(null);
+            setRelationshipDraft(null);
+            setSelectedTopicId(topicId);
+         }
+      },
+      [relationshipMode, relationshipDraft, updateActiveSheet],
+   );
+
+   const handleRelationshipCursorMove = useCallback((point: Vec2) => {
+      setRelationshipDraft((current) => (current ? { ...current, cursor: point } : current));
+   }, []);
+
+   const updateRelationship = useCallback(
+      (relationshipId: string, patch: Partial<Relationship>) => {
+         updateActiveSheet((draft) => {
+            const relationship = draft.relationships.find((item) => item.id === relationshipId);
+            if (!relationship) return;
+            Object.assign(relationship, patch);
+         });
+      },
+      [updateActiveSheet],
+   );
+
+   useEffect(() => {
+      const handleKeyDown = (event: KeyboardEvent) => {
+         if (event.key === 'Escape' && relationshipMode) {
+            event.preventDefault();
+            cancelRelationshipMode();
+            return;
+         }
+
+         if (
+            (event.ctrlKey || event.metaKey) &&
+            event.shiftKey &&
+            event.key.toLowerCase() === 'r'
+         ) {
+            event.preventDefault();
+            if (relationshipMode) {
+               cancelRelationshipMode();
+            } else {
+               startRelationshipMode();
+            }
+         }
+      };
+
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+   }, [relationshipMode, cancelRelationshipMode, startRelationshipMode]);
+
    useEffect(() => {
       const handleKeyDown = (event: KeyboardEvent) => {
          if (
@@ -1320,13 +1413,14 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                onInsertChild={() => {
                   if (selectedTopicId) insertChildTopic(selectedTopicId);
                }}
+               onAddRelationship={startRelationshipMode}
+               relationshipModeActive={relationshipMode !== null}
                onAddContent={openNotesPanel}
                onAddLabel={openLabelPanel}
                onAddWebpage={() => openWebLinkModal(undefined, 'webpage')}
                onAddTopicLink={() => openTopicLinkModal()}
                onAddCloudStorage={() => openWebLinkModal(undefined, 'cloud')}
                onAddEquation={() => openEquationPanel()}
-               onAddComment={() => {}}
                onAddSticker={openStickerPanel}
             />
             <Viewport
@@ -1345,6 +1439,8 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                   setExternalLinkUrl(null);
                   setEquationSelectedTopicId(null);
                   setSelectedTopicId(null);
+                  setSelectedRelationshipId(null);
+                  cancelRelationshipMode();
                }}
                overlay={
                   <>
@@ -1447,6 +1543,20 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                   viewportZoom={viewport.zoom}
                   onStickerLegendPositionChange={updateStickerLegendPosition}
                   onStickerLegendLabelChange={updateStickerLegendLabel}
+                  viewport={viewport}
+                  relationshipDraft={relationshipDraft}
+                  relationshipMode={relationshipMode}
+                  selectedRelationshipId={selectedRelationshipId}
+                  onRelationshipTopicClick={handleRelationshipTopicClick}
+                  onRelationshipCursorMove={handleRelationshipCursorMove}
+                  onSelectRelationship={(relationshipId) => {
+                     setSelectedRelationshipId(relationshipId);
+                     if (relationshipId) {
+                        setSelectedTopicId(null);
+                        dismissTopicPanels();
+                     }
+                  }}
+                  onUpdateRelationship={updateRelationship}
                />
             </Viewport>
             <RightSidebars

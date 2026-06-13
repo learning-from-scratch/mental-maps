@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Sheet, TopicId, MarkerId, Vec2 } from '@/core/model/types';
 import type { TopicLinkKind } from '@/core/model/link';
 import { collectSheetStickerIds } from '@/core/model/stickers';
@@ -7,9 +7,13 @@ import { layoutSheet } from '@/layout';
 import { collapseHandleCenterX } from '@/layout/edges';
 import { DEFAULT_MAP_THEME_ID } from '@/layout/theme';
 import { EdgeLayer } from '@/view/edge/EdgeLayer';
+import { RelationshipLayer, type RelationshipDraft } from '@/view/relationship/RelationshipLayer';
+import type { Relationship } from '@/core/model/types';
 import { CollapseHandle } from '@/view/topic/CollapseHandle';
 import { TopicView } from '@/view/topic/TopicView';
 import { StickerLegend } from '@/view/canvas/StickerLegend';
+import { clientToWorld } from '@/view/canvas/coords';
+import type { ViewportState } from '@/view/canvas/Viewport';
 import {
    findEquationDropTarget,
    type EquationDragOverlay,
@@ -42,6 +46,7 @@ interface MindMapCanvasProps {
    stickerLegendPosition?: Vec2;
    stickerLegendLabels?: Record<MarkerId, string>;
    viewportZoom?: number;
+   viewport?: ViewportState;
    onStickerLegendPositionChange?: (position: Vec2) => void;
    onStickerLegendLabelChange?: (markerId: MarkerId, label: string) => void;
    equationSelectedTopicId?: TopicId | null;
@@ -60,6 +65,13 @@ interface MindMapCanvasProps {
    onDismissTopicPanels?: () => void;
    onToggleCollapse: (topicId: TopicId) => void;
    resolveTopicLinkLabel?: (topicId: TopicId) => string | undefined;
+   relationshipDraft?: RelationshipDraft | null;
+   relationshipMode?: 'pick-start' | 'pick-end' | null;
+   selectedRelationshipId?: string | null;
+   onRelationshipTopicClick?: (topicId: TopicId) => void;
+   onRelationshipCursorMove?: (point: Vec2) => void;
+   onSelectRelationship?: (relationshipId: string | null) => void;
+   onUpdateRelationship?: (relationshipId: string, patch: Partial<Relationship>) => void;
 }
 
 export function MindMapCanvas({
@@ -88,6 +100,7 @@ export function MindMapCanvas({
    stickerLegendPosition = { x: 24, y: 24 },
    stickerLegendLabels = {},
    viewportZoom = 1,
+   viewport = { x: 0, y: 0, zoom: viewportZoom },
    onStickerLegendPositionChange,
    onStickerLegendLabelChange,
    equationSelectedTopicId = null,
@@ -101,6 +114,13 @@ export function MindMapCanvas({
    onDismissTopicPanels,
    onToggleCollapse,
    resolveTopicLinkLabel,
+   relationshipDraft = null,
+   relationshipMode = null,
+   selectedRelationshipId = null,
+   onRelationshipTopicClick,
+   onRelationshipCursorMove,
+   onSelectRelationship = () => {},
+   onUpdateRelationship = () => {},
 }: MindMapCanvasProps) {
    const [liveEdit, setLiveEdit] = useState<{ topicId: TopicId; text: string } | null>(null);
    const [liveEquationScale, setLiveEquationScale] = useState<{
@@ -109,7 +129,34 @@ export function MindMapCanvas({
    } | null>(null);
    const [hoveredCollapseTopicId, setHoveredCollapseTopicId] = useState<TopicId | null>(null);
    const [equationDrag, setEquationDrag] = useState<EquationDragOverlay | null>(null);
+   const canvasRef = useRef<HTMLDivElement>(null);
    const editingTopicRef = useRef<TopicId | null>(null);
+
+   useEffect(() => {
+      if (!relationshipDraft || !onRelationshipCursorMove) return;
+
+      const onPointerMove = (event: PointerEvent) => {
+         const container = canvasRef.current?.closest('.viewport') as HTMLElement | null;
+         if (!container) return;
+         onRelationshipCursorMove(
+            clientToWorld(event.clientX, event.clientY, viewport, container),
+         );
+      };
+
+      window.addEventListener('pointermove', onPointerMove);
+      return () => window.removeEventListener('pointermove', onPointerMove);
+   }, [relationshipDraft, onRelationshipCursorMove, viewport]);
+
+   const handleTopicSelect = useCallback(
+      (topicId: TopicId) => {
+         if (relationshipMode) {
+            onRelationshipTopicClick?.(topicId);
+            return;
+         }
+         onSelectTopic(topicId);
+      },
+      [relationshipMode, onRelationshipTopicClick, onSelectTopic],
+   );
 
    const handleEditingChange = useCallback(
       (topicId: TopicId, editing: boolean) => {
@@ -288,6 +335,7 @@ export function MindMapCanvas({
    const legendStickerIds = useMemo(() => collectSheetStickerIds(sheet), [sheet]);
    return (
       <div
+         ref={canvasRef}
          className="mindmap-canvas"
          style={{
             left: layout.bounds.x,
@@ -300,6 +348,16 @@ export function MindMapCanvas({
             edges={layout.edges}
             bounds={layout.bounds}
             rootExclusion={rootLayout}
+         />
+         <RelationshipLayer
+            relationships={sheet.relationships}
+            nodes={layout.nodes}
+            bounds={layout.bounds}
+            draft={relationshipDraft}
+            selectedRelationshipId={selectedRelationshipId}
+            zoom={viewportZoom}
+            onSelectRelationship={onSelectRelationship}
+            onUpdateRelationship={onUpdateRelationship}
          />
          <div
             className="mindmap-canvas__topics"
@@ -326,7 +384,7 @@ export function MindMapCanvas({
                   autoFocusEdit={topicId === editTopicId}
                   onAutoFocusEditConsumed={onEditTopicIdConsumed}
                   onEditingChange={(editing) => handleEditingChange(topicId, editing)}
-                  onSelect={onSelectTopic}
+                  onSelect={handleTopicSelect}
                   onTextChange={onTopicTextChange}
                   onInsertChildAfterEdit={onInsertChildAfterEdit}
                   onInsertSiblingAfterEdit={onInsertSiblingAfterEdit}

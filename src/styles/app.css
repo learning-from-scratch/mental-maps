@@ -155,6 +155,90 @@ body,
    stroke-linejoin: round;
 }
 
+.relationship-layer {
+   position: absolute;
+   inset: 0;
+   overflow: visible;
+   z-index: 2;
+   pointer-events: none;
+}
+
+.relationship-layer__svg {
+   position: absolute;
+   overflow: visible;
+   pointer-events: none;
+}
+
+.relationship-layer__path {
+   stroke-linecap: round;
+   stroke-linejoin: round;
+   pointer-events: none;
+}
+
+.relationship-layer__path--draft {
+   opacity: 0.85;
+}
+
+.relationship-layer__path-hit {
+   cursor: pointer;
+   pointer-events: stroke;
+}
+
+.relationship-layer__path-glow {
+   stroke-linecap: round;
+   stroke-linejoin: round;
+}
+
+.relationship-layer__handles {
+   pointer-events: auto;
+}
+
+.relationship-layer__handle-stalk {
+   stroke: #4a9eed;
+   stroke-width: 1.5;
+   pointer-events: none;
+}
+
+.relationship-layer__handle--anchor {
+   fill: #ffffff;
+   stroke: #4a9eed;
+   stroke-width: 2;
+   cursor: grab;
+   pointer-events: auto;
+}
+
+.relationship-layer__handle--control {
+   fill: #4a9eed;
+   stroke: #ffffff;
+   stroke-width: 1.5;
+   cursor: grab;
+   pointer-events: auto;
+}
+
+.relationship-layer__label-wrap {
+   position: absolute;
+   pointer-events: auto;
+   z-index: 1;
+}
+
+.relationship-layer__label {
+   font-size: 14px;
+   color: #1a1a1a;
+   white-space: nowrap;
+   cursor: default;
+   user-select: none;
+}
+
+.relationship-layer__label--editing {
+   outline: none;
+   cursor: text;
+   user-select: text;
+}
+
+.relationship-layer__label-wrap--selected .relationship-layer__label {
+   font-weight: 500;
+}
+
 /* ── Topics ────────────────────────────────────────── */
 
 .topic-view-wrap {
@@ -1635,14 +1719,23 @@ body,
 
 .insert-menu__submenu {
    position: absolute;
-   top: 0;
-   left: calc(100% + 6px);
+   top: -10px;
+   left: calc(100% + 2px);
    min-width: 170px;
    padding: 8px 0;
    border-radius: 12px;
    background: #2b2b2b;
    border: 1px solid #3d3d3d;
    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+}
+
+.insert-menu__submenu::before {
+   content: '';
+   position: absolute;
+   top: 0;
+   right: 100%;
+   width: 6px;
+   height: 100%;
 }
 
 .insert-menu__submenu-item {

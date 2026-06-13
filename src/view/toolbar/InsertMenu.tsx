@@ -4,7 +4,6 @@ import {
   ExternalLink,
   Globe,
   Link2,
-  MessageSquare,
   Sigma,
   SquarePen,
   Sticker,
@@ -25,7 +24,6 @@ interface InsertMenuProps {
   onCloudStorage?: () => void;
   onEquation?: () => void;
   onSticker?: () => void;
-  onComment?: () => void;
 }
 
 interface MenuItem {
@@ -50,24 +48,17 @@ const OTHER_SECTIONS: MenuItem[][] = [
   ],
 ];
 
-function buildFirstSection(hasSelection: boolean): MenuItem[] {
-  const section: MenuItem[] = [
+function buildFirstSection(): MenuItem[] {
+  return [
     { id: 'note', label: 'Note', icon: <SquarePen {...insertIcon()} /> },
     { id: 'label', label: 'Label', icon: <Tag {...insertIcon()} /> },
+    {
+      id: 'link',
+      label: 'Link',
+      icon: <ExternalLink {...insertIcon()} />,
+      hasSubmenu: true,
+    },
   ];
-
-  if (!hasSelection) {
-    section.push({ id: 'comment', label: 'Comment', icon: <MessageSquare {...insertIcon()} /> });
-  }
-
-  section.push({
-    id: 'link',
-    label: 'Link',
-    icon: <ExternalLink {...insertIcon()} />,
-    hasSubmenu: true,
-  });
-
-  return section;
 }
 
 function MenuRow({ item }: { item: MenuItem }) {
@@ -82,8 +73,7 @@ function MenuRow({ item }: { item: MenuItem }) {
   );
 }
 
-function isItemDisabled(itemId: string, hasSelection: boolean): boolean {
-  if (itemId === 'comment') return false;
+function isItemDisabled(_itemId: string, hasSelection: boolean): boolean {
   return !hasSelection;
 }
 
@@ -99,7 +89,6 @@ export function InsertMenu({
   onCloudStorage,
   onEquation,
   onSticker,
-  onComment,
 }: InsertMenuProps) {
   const handleItemClick = (itemId: string) => {
     if (isItemDisabled(itemId, hasSelection)) return;
@@ -126,17 +115,12 @@ export function InsertMenu({
 
     if (itemId === 'sticker') {
       onSticker?.();
-      return;
-    }
-
-    if (itemId === 'comment') {
-      onComment?.();
     }
   };
 
   if (!open) return null;
 
-  const sections = [buildFirstSection(hasSelection), ...OTHER_SECTIONS];
+  const sections = [buildFirstSection(), ...OTHER_SECTIONS];
 
   return (
     <div className="insert-menu insert-menu--anchored">
