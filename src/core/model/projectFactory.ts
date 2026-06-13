@@ -19,11 +19,20 @@ export function normalizeTopic(topic: Topic): Topic {
   return normalized;
 }
 
+/** Ensures legacy persisted sheets have required array fields before read or mutation. */
+export function ensureSheetArrays(sheet: Sheet): void {
+  sheet.relationships ??= [];
+  sheet.boundaries ??= [];
+  sheet.summaries ??= [];
+  sheet.floatingTopicIds ??= [];
+}
+
 export function normalizeSheet(
   sheet: Sheet,
   projectThemeFallback?: string,
   projectDotsFallback?: boolean,
 ): Sheet {
+  ensureSheetArrays(sheet);
   const topicsById = Object.fromEntries(
     Object.entries(sheet.topicsById).map(([id, topic]) => [id, normalizeTopic(topic)]),
   ) as Sheet['topicsById'];
@@ -36,6 +45,10 @@ export function normalizeSheet(
   return {
     ...sheet,
     topicsById,
+    relationships: sheet.relationships ?? [],
+    boundaries: sheet.boundaries ?? [],
+    summaries: sheet.summaries ?? [],
+    floatingTopicIds: sheet.floatingTopicIds ?? [],
     theme: resolveSheetThemeId(sheet.theme, projectThemeFallback ?? DEFAULT_MAP_THEME_ID),
     canvasDotsEnabled: sheet.canvasDotsEnabled ?? projectDotsFallback ?? true,
   };

@@ -39,20 +39,20 @@ export function duplicateSheet(source: Sheet, title?: string): Sheet {
     id: nanoid(),
     title: title ?? `${source.title} copy`,
     rootTopicId: remap(source.rootTopicId),
-    floatingTopicIds: source.floatingTopicIds.map(remap),
+    floatingTopicIds: (source.floatingTopicIds ?? []).map(remap),
     topicsById,
-    relationships: source.relationships.map((relationship) => ({
+    relationships: (source.relationships ?? []).map((relationship) => ({
       ...structuredClone(relationship),
       id: nanoid(),
       fromId: remap(relationship.fromId),
       toId: remap(relationship.toId),
     })),
-    boundaries: source.boundaries.map((boundary) => ({
+    boundaries: (source.boundaries ?? []).map((boundary) => ({
       ...structuredClone(boundary),
       id: nanoid(),
       parentId: remap(boundary.parentId),
     })),
-    summaries: source.summaries.map((summary) => ({
+    summaries: (source.summaries ?? []).map((summary) => ({
       ...structuredClone(summary),
       id: nanoid(),
       parentId: remap(summary.parentId),

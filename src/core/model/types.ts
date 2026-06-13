@@ -53,12 +53,18 @@ export interface Relationship {
   toId: TopicId;
   label?: string;
   style?: { color?: string; lineStyle?: 'dashed' | 'solid' };
+  /** Locked attachment side on the origin node. */
+  fromSide?: RelationshipAnchorSide;
+  /** Locked attachment side on the destination node. */
+  toSide?: RelationshipAnchorSide;
   /** Normalized anchor on the from-node bounding box (0-1). */
   fromAnchor?: Vec2;
   /** Normalized anchor on the to-node bounding box (0-1). */
   toAnchor?: Vec2;
   controlOffsets?: [Vec2, Vec2];
 }
+
+export type RelationshipAnchorSide = 'top' | 'bottom' | 'left' | 'right';
 
 export interface Boundary {
   id: string;

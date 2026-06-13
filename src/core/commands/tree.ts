@@ -222,13 +222,13 @@ export function deleteTopicSubtree(sheet: Sheet, rootTopicId: TopicId): TopicId[
     delete sheet.topicsById[topicId];
   }
 
-  sheet.relationships = sheet.relationships.filter(
+  sheet.relationships = (sheet.relationships ?? []).filter(
     (rel) => !deleteSet.has(rel.fromId) && !deleteSet.has(rel.toId),
   );
 
-  sheet.boundaries = sheet.boundaries.filter((boundary) => !deleteSet.has(boundary.parentId));
+  sheet.boundaries = (sheet.boundaries ?? []).filter((boundary) => !deleteSet.has(boundary.parentId));
 
-  sheet.summaries = sheet.summaries.filter((summary) => {
+  sheet.summaries = (sheet.summaries ?? []).filter((summary) => {
     if (deleteSet.has(summary.parentId) || deleteSet.has(summary.summaryTopicId)) {
       return false;
     }

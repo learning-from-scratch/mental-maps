@@ -29,8 +29,6 @@ interface MindMapCanvasProps {
    themeId?: string;
    onSelectTopic: (topicId: TopicId) => void;
    onTopicTextChange: (topicId: TopicId, text: string) => void;
-   onInsertChildAfterEdit?: (topicId: TopicId, text: string) => void;
-   onInsertSiblingAfterEdit?: (topicId: TopicId, text: string) => void;
    onOpenNotesPanel: (topicId: TopicId) => void;
    onOpenLabelsPanel: (topicId: TopicId) => void;
    onOpenLink: (topicId: TopicId, url: string) => void;
@@ -83,8 +81,6 @@ export function MindMapCanvas({
    themeId = DEFAULT_MAP_THEME_ID,
    onSelectTopic,
    onTopicTextChange,
-   onInsertChildAfterEdit,
-   onInsertSiblingAfterEdit,
    onOpenNotesPanel,
    onOpenLabelsPanel,
    onOpenLink,
@@ -350,7 +346,7 @@ export function MindMapCanvas({
             rootExclusion={rootLayout}
          />
          <RelationshipLayer
-            relationships={sheet.relationships}
+            relationships={sheet.relationships ?? []}
             nodes={layout.nodes}
             bounds={layout.bounds}
             draft={relationshipDraft}
@@ -386,8 +382,6 @@ export function MindMapCanvas({
                   onEditingChange={(editing) => handleEditingChange(topicId, editing)}
                   onSelect={handleTopicSelect}
                   onTextChange={onTopicTextChange}
-                  onInsertChildAfterEdit={onInsertChildAfterEdit}
-                  onInsertSiblingAfterEdit={onInsertSiblingAfterEdit}
                   onLiveTextChange={handleLiveTextChange}
                   onOpenNotes={onOpenNotesPanel}
                   onOpenLabels={onOpenLabelsPanel}

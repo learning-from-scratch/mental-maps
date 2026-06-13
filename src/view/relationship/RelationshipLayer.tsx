@@ -1,20 +1,30 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import type { Relationship, TopicId, Vec2 } from '@/core/model/types';
 import type { NodeLayout, Rect } from '@/layout/types';
 import {
-  projectToNodePerimeter,
+  controlsForDirectedAnchor,
+  snapAnchorToDirectedSide,
   relationshipMidpoint,
   relationshipPath,
   resolveRelationshipGeometry,
   draftRelationshipGeometry,
+  findNodeAtPoint,
   type RelationshipGeometry,
 } from '@/layout/relationshipGeometry';
-import { DEFAULT_RELATIONSHIP_COLOR } from '@/core/model/relationships';
+import { DEFAULT_RELATIONSHIP_COLOR, DEFAULT_RELATIONSHIP_LABEL, hasOfficialRelationshipLabel } from '@/core/model/relationships';
 
 export type RelationshipDraft = {
   fromId: TopicId;
   cursor: Vec2;
 };
+
+const RELATIONSHIP_ARROW_SIZE = 5;
+
+function relationshipArrowMarkerPath(): string {
+  const tip = RELATIONSHIP_ARROW_SIZE;
+  const mid = tip / 2;
+  return `M 0 0 L ${tip} ${mid} L 0 ${tip} z`;
+}
 
 interface RelationshipLayerProps {
   relationships: Relationship[];
@@ -35,6 +45,7 @@ function RelationshipLabel({
   selected,
   onSelect,
   onCommit,
+  onDeselect,
 }: {
   label: string;
   left: number;
@@ -43,9 +54,18 @@ function RelationshipLabel({
   selected: boolean;
   onSelect: () => void;
   onCommit: (label: string) => void;
+  onDeselect: () => void;
 }) {
   const [isEditing, setIsEditing] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLSpanElement>(null);
+
+  const commit = useCallback(() => {
+    if (!isEditing) return;
+    const next = editorRef.current?.textContent?.trim() ?? '';
+    onCommit(next);
+    setIsEditing(false);
+  }, [isEditing, onCommit]);
 
   useLayoutEffect(() => {
     if (!isEditing) return;
@@ -60,14 +80,23 @@ function RelationshipLabel({
     selection?.addRange(range);
   }, [isEditing, label]);
 
-  const commit = () => {
-    const next = editorRef.current?.textContent?.trim() || 'Relationship';
-    onCommit(next);
-    setIsEditing(false);
-  };
+  useLayoutEffect(() => {
+    if (!isEditing) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (wrapRef.current?.contains(target)) return;
+      commit();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => document.removeEventListener('pointerdown', handlePointerDown, true);
+  }, [isEditing, commit]);
 
   return (
     <div
+      ref={wrapRef}
       className={`relationship-layer__label-wrap${selected ? ' relationship-layer__label-wrap--selected' : ''}`}
       style={{ left: left - bounds.x, top: top - bounds.y, transform: 'translate(-50%, -50%)' }}
       onPointerDown={(event) => event.stopPropagation()}
@@ -89,6 +118,7 @@ function RelationshipLabel({
             if (event.key === 'Enter') {
               event.preventDefault();
               commit();
+              onDeselect();
             } else if (event.key === 'Escape') {
               event.preventDefault();
               setIsEditing(false);
@@ -160,13 +190,35 @@ function RelationshipEditor({
 
     if (drag.kind === 'from-anchor') {
       const point = { x: start.from.x + dx, y: start.from.y + dy };
-      onUpdate({ fromAnchor: projectToNodePerimeter(fromNode, point) });
+      const { anchor: fromAnchor, side: fromSide } = snapAnchorToDirectedSide(fromNode, point);
+      const toAnchor = relationship.toAnchor ?? start.toAnchor;
+      onUpdate(
+        controlsForDirectedAnchor(
+          fromNode,
+          toNode,
+          fromAnchor,
+          toAnchor,
+          fromSide,
+          relationship.toSide,
+        ),
+      );
       return;
     }
 
     if (drag.kind === 'to-anchor') {
       const point = { x: start.to.x + dx, y: start.to.y + dy };
-      onUpdate({ toAnchor: projectToNodePerimeter(toNode, point) });
+      const { anchor: toAnchor, side: toSide } = snapAnchorToDirectedSide(toNode, point);
+      const fromAnchor = relationship.fromAnchor ?? start.fromAnchor;
+      onUpdate(
+        controlsForDirectedAnchor(
+          fromNode,
+          toNode,
+          fromAnchor,
+          toAnchor,
+          relationship.fromSide,
+          toSide,
+        ),
+      );
       return;
     }
 
@@ -340,7 +392,8 @@ export function RelationshipLayer({
   if (draft) {
     const fromNode = nodes.get(draft.fromId);
     if (fromNode) {
-      draftGeometry = draftRelationshipGeometry(fromNode, draft.cursor);
+      const hoverNode = findNodeAtPoint(nodes, draft.cursor, draft.fromId);
+      draftGeometry = draftRelationshipGeometry(fromNode, draft.cursor, hoverNode ?? undefined);
     }
   }
 
@@ -359,15 +412,15 @@ export function RelationshipLayer({
             <marker
               key={relationship.id}
               id={`relationship-arrow-${relationship.id}`}
-              markerWidth="8"
-              markerHeight="8"
-              refX="7"
-              refY="4"
+              markerWidth={RELATIONSHIP_ARROW_SIZE}
+              markerHeight={RELATIONSHIP_ARROW_SIZE}
+              refX={RELATIONSHIP_ARROW_SIZE - 0.5}
+              refY={RELATIONSHIP_ARROW_SIZE / 2}
               orient="auto"
               markerUnits="strokeWidth"
             >
               <path
-                d="M 0 0 L 8 4 L 0 8 z"
+                d={relationshipArrowMarkerPath()}
                 fill={relationship.style?.color ?? DEFAULT_RELATIONSHIP_COLOR}
               />
             </marker>
@@ -375,14 +428,14 @@ export function RelationshipLayer({
           {draftGeometry ? (
             <marker
               id="relationship-arrow-draft"
-              markerWidth="8"
-              markerHeight="8"
-              refX="7"
-              refY="4"
+              markerWidth={RELATIONSHIP_ARROW_SIZE}
+              markerHeight={RELATIONSHIP_ARROW_SIZE}
+              refX={RELATIONSHIP_ARROW_SIZE - 0.5}
+              refY={RELATIONSHIP_ARROW_SIZE / 2}
               orient="auto"
               markerUnits="strokeWidth"
             >
-              <path d="M 0 0 L 8 4 L 0 8 z" fill={DEFAULT_RELATIONSHIP_COLOR} />
+              <path d={relationshipArrowMarkerPath()} fill={DEFAULT_RELATIONSHIP_COLOR} />
             </marker>
           ) : null}
         </defs>
@@ -427,7 +480,14 @@ export function RelationshipLayer({
       </svg>
 
       {resolved.map(({ relationship, midpoint }) => {
-        const label = relationship.label?.trim() || 'Relationship';
+        const selected = relationship.id === selectedRelationshipId;
+        const official = hasOfficialRelationshipLabel(relationship.label);
+        if (!selected && !official) return null;
+
+        const label = official
+          ? relationship.label!.trim()
+          : DEFAULT_RELATIONSHIP_LABEL;
+
         return (
           <RelationshipLabel
             key={`${relationship.id}-label`}
@@ -435,11 +495,12 @@ export function RelationshipLayer({
             left={midpoint.x}
             top={midpoint.y}
             bounds={bounds}
-            selected={relationship.id === selectedRelationshipId}
+            selected={selected}
             onSelect={() => onSelectRelationship(relationship.id)}
             onCommit={(nextLabel) =>
-              onUpdateRelationship(relationship.id, { label: nextLabel })
+              onUpdateRelationship(relationship.id, { label: nextLabel || undefined })
             }
+            onDeselect={() => onSelectRelationship(null)}
           />
         );
       })}

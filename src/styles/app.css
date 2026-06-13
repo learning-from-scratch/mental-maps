@@ -222,11 +222,15 @@ body,
 }
 
 .relationship-layer__label {
+   display: inline-block;
    font-size: 14px;
    color: #1a1a1a;
    white-space: nowrap;
    cursor: default;
    user-select: none;
+   background-color: var(--canvas-bg, #faf9f7);
+   padding: 1px 5px;
+   border-radius: 2px;
 }
 
 .relationship-layer__label--editing {

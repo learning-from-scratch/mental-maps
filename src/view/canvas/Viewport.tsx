@@ -154,7 +154,8 @@ export function Viewport({
       if (
         active.classList.contains('topic-view__editor') ||
         active.classList.contains('topic-notes-panel__editor') ||
-        active.classList.contains('topic-equation-panel__input')
+        active.classList.contains('topic-equation-panel__input') ||
+        active.classList.contains('relationship-layer__label--editing')
       ) {
         active.blur();
       }

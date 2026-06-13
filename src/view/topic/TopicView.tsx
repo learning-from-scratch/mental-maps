@@ -90,8 +90,6 @@ interface TopicViewProps {
   onEditingChange?: (editing: boolean) => void;
   onSelect?: (topicId: TopicId) => void;
   onTextChange?: (topicId: TopicId, text: string) => void;
-  onInsertChildAfterEdit?: (topicId: TopicId, text: string) => void;
-  onInsertSiblingAfterEdit?: (topicId: TopicId, text: string) => void;
   onLiveTextChange?: (topicId: TopicId, text: string | null) => void;
   onOpenNotes?: (topicId: TopicId) => void;
   onOpenLabels?: (topicId: TopicId) => void;
@@ -138,8 +136,6 @@ export function TopicView({
   onEditingChange,
   onSelect,
   onTextChange,
-  onInsertChildAfterEdit,
-  onInsertSiblingAfterEdit,
   onLiveTextChange,
   onOpenNotes,
   onOpenLabels,
@@ -193,22 +189,6 @@ export function TopicView({
     onEditingChange?.(false);
     if (nextText !== text) onTextChange?.(topicId, nextText);
   }, [text, topicId, onTextChange, onEditingChange]);
-
-  const commitTextForInsert = useCallback(() => {
-    return draftTextRef.current.trim();
-  }, []);
-
-  const finishEditAndInsert = useCallback(
-    (insert: ((topicId: TopicId, text: string) => void) | undefined) => {
-      if (!insert) return;
-      const nextText = commitTextForInsert();
-      isEditingRef.current = false;
-      setIsEditing(false);
-      onEditingChange?.(false);
-      insert(topicId, nextText);
-    },
-    [commitTextForInsert, onEditingChange, topicId],
-  );
 
   useEffect(() => {
     if (!isEditing) setDraftText(text);
@@ -661,10 +641,10 @@ export function TopicView({
                   event.stopPropagation();
                   if (event.key === 'Tab') {
                     event.preventDefault();
-                    finishEditAndInsert(onInsertChildAfterEdit);
+                    commitEdit();
                   } else if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault();
-                    finishEditAndInsert(onInsertSiblingAfterEdit);
+                    commitEdit();
                   } else if (event.key === 'Escape') {
                     event.preventDefault();
                     cancelEdit();
@@ -690,10 +670,10 @@ export function TopicView({
               event.stopPropagation();
               if (event.key === 'Tab') {
                 event.preventDefault();
-                finishEditAndInsert(onInsertChildAfterEdit);
+                commitEdit();
               } else if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
-                finishEditAndInsert(onInsertSiblingAfterEdit);
+                commitEdit();
               } else if (event.key === 'Escape') {
                 event.preventDefault();
                 cancelEdit();

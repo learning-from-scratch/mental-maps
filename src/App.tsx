@@ -7,6 +7,8 @@ import { createSheet } from '@/core/model/factories';
 import type { ProjectState } from '@/core/model/project';
 import {
    createEmptyProject,
+   ensureSheetArrays,
+   normalizeSheet,
    prepareProjectSheet,
    projectFromSheet,
 } from '@/core/model/projectFactory';
@@ -27,6 +29,7 @@ import {
    resolveSheetThemeId,
 } from '@/layout/theme';
 import { layoutSheet } from '@/layout';
+import { confirmRelationshipGeometry } from '@/layout/relationshipGeometry';
 import type { LayoutResult } from '@/layout/types';
 import { clearMeasureCache } from '@/layout/measure';
 import {
@@ -218,9 +221,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    const [activeProjectId, setActiveProjectId] = useState(
       isCloud ? '' : localSampleProject.id,
    );
-   const [selectedTopicId, setSelectedTopicId] = useState<TopicId | null>(
-      isCloud ? null : 'b2',
-   );
+   const [selectedTopicId, setSelectedTopicId] = useState<TopicId | null>(null);
    const [cloudLoading, setCloudLoading] = useState(isCloud);
    const [cloudError, setCloudError] = useState<string | null>(null);
    const urlNavigationHandled = useRef(false);
@@ -280,7 +281,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                const project = { ...empty, id };
                setProjects([project]);
                setActiveProjectId(id);
-               setSelectedTopicId(project.sheetsById[project.activeSheetId]!.rootTopicId);
+               setSelectedTopicId(null);
                revealNavHint();
                return;
             }
@@ -291,7 +292,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             const first = loaded[0]!;
             setProjects(loaded);
             setActiveProjectId(first.id);
-            setSelectedTopicId(first.sheetsById[first.activeSheetId]!.rootTopicId);
+            setSelectedTopicId(null);
          } catch (error) {
             if (!cancelled) {
                setCloudError(error instanceof Error ? error.message : 'Failed to load maps');
@@ -335,11 +336,15 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             entry.id === project.id ? { ...entry, activeSheetId: sheetId } : entry,
          ),
       );
-      setSelectedTopicId(targetSheet.rootTopicId);
+      setSelectedTopicId(null);
    }, [cloudLoading, projects, activeProjectId]);
 
    const activeProject = projects.find((project) => project.id === activeProjectId) ?? projects[0];
-   const sheet = activeProject?.sheetsById[activeProject.activeSheetId];
+   const rawSheet = activeProject?.sheetsById[activeProject.activeSheetId];
+   const sheet = useMemo(
+      () => (rawSheet ? normalizeSheet(rawSheet) : undefined),
+      [rawSheet],
+   );
    const mapThemeId = sheet ? resolveSheetThemeId(sheet.theme) : DEFAULT_MAP_THEME_ID;
    const canvasDotsEnabled = sheet?.canvasDotsEnabled ?? true;
 
@@ -417,7 +422,10 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                   ...project,
                   sheetsById: {
                      ...project.sheetsById,
-                     [project.activeSheetId]: produce(activeSheet, recipe),
+                     [project.activeSheetId]: produce(activeSheet, (draft) => {
+                        ensureSheetArrays(draft);
+                        recipe(draft);
+                     }),
                   },
                };
             }),
@@ -827,7 +835,18 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
          if (relationshipMode === 'pick-end' && relationshipDraft) {
             if (topicId === relationshipDraft.fromId) return;
 
-            const relationship = createRelationship(relationshipDraft.fromId, topicId);
+            const fromNode = mapLayout?.nodes.get(relationshipDraft.fromId);
+            const toNode = mapLayout?.nodes.get(topicId);
+            const relationship = {
+               ...createRelationship(relationshipDraft.fromId, topicId),
+               ...(fromNode && toNode
+                  ? confirmRelationshipGeometry(
+                       fromNode,
+                       toNode,
+                       relationshipDraft.cursor,
+                    )
+                  : {}),
+            };
             updateActiveSheet((draft) => {
                draft.relationships.push(relationship);
             });
@@ -837,7 +856,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             setSelectedTopicId(topicId);
          }
       },
-      [relationshipMode, relationshipDraft, updateActiveSheet],
+      [relationshipMode, relationshipDraft, mapLayout, updateActiveSheet],
    );
 
    const handleRelationshipCursorMove = useCallback((point: Vec2) => {
@@ -855,11 +874,36 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       [updateActiveSheet],
    );
 
+   const deleteSelectedRelationship = useCallback(() => {
+      if (!selectedRelationshipId) return;
+      const relationshipId = selectedRelationshipId;
+      updateActiveSheet((draft) => {
+         draft.relationships = draft.relationships.filter((item) => item.id !== relationshipId);
+      });
+      setSelectedRelationshipId(null);
+   }, [selectedRelationshipId, updateActiveSheet]);
+
    useEffect(() => {
       const handleKeyDown = (event: KeyboardEvent) => {
          if (event.key === 'Escape' && relationshipMode) {
             event.preventDefault();
             cancelRelationshipMode();
+            return;
+         }
+
+         if (event.key === 'Delete' && selectedRelationshipId) {
+            const target = event.target;
+            if (
+               target instanceof HTMLInputElement ||
+               target instanceof HTMLTextAreaElement ||
+               target instanceof HTMLSelectElement ||
+               (target instanceof HTMLElement && target.isContentEditable)
+            ) {
+               return;
+            }
+
+            event.preventDefault();
+            deleteSelectedRelationship();
             return;
          }
 
@@ -879,7 +923,13 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-   }, [relationshipMode, cancelRelationshipMode, startRelationshipMode]);
+   }, [
+      relationshipMode,
+      selectedRelationshipId,
+      cancelRelationshipMode,
+      startRelationshipMode,
+      deleteSelectedRelationship,
+   ]);
 
    useEffect(() => {
       const handleKeyDown = (event: KeyboardEvent) => {
@@ -1236,9 +1286,13 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       const project = projects.find((candidate) => candidate.id === projectId);
       if (!project) return;
 
+      dismissTopicPanels();
+      setExternalLinkUrl(null);
+      setEquationSelectedTopicId(null);
+      setSelectedRelationshipId(null);
+      cancelRelationshipMode();
       setActiveProjectId(project.id);
-      const activeSheet = project.sheetsById[project.activeSheetId];
-      setSelectedTopicId(activeSheet?.rootTopicId ?? null);
+      setSelectedTopicId(null);
    };
 
    const selectSheet = (sheetId: SheetId) => {
@@ -1247,8 +1301,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             project.id === activeProjectId ? { ...project, activeSheetId: sheetId } : project,
          ),
       );
-      const nextSheet = activeProject.sheetsById[sheetId];
-      if (nextSheet) setSelectedTopicId(nextSheet.rootTopicId);
+      setSelectedTopicId(null);
    };
 
    const duplicateSheetInProject = (sheetId: SheetId) => {
@@ -1269,7 +1322,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                : project,
          ),
       );
-      setSelectedTopicId(copy.rootTopicId);
+      setSelectedTopicId(null);
    };
 
    const deleteSheet = (sheetId: SheetId) => {
@@ -1300,8 +1353,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       );
 
       if (wasActive) {
-         const nextSheet = project.sheetsById[nextActiveId];
-         if (nextSheet) setSelectedTopicId(nextSheet.rootTopicId);
+         setSelectedTopicId(null);
       }
    };
 
@@ -1352,10 +1404,13 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
          const empty = createEmptyProject(title);
          const id = await createMap(empty);
          const project = { ...empty, id };
+         const rootTopicId = project.sheetsById[project.activeSheetId]!.rootTopicId;
 
-         setProjects((current) => [...current, project]);
-         setActiveProjectId(id);
-         setSelectedTopicId(project.sheetsById[project.activeSheetId]!.rootTopicId);
+         flushSync(() => {
+            setProjects((current) => [...current, project]);
+            setActiveProjectId(id);
+            setSelectedTopicId(rootTopicId);
+         });
          revealNavHint();
          return;
       }
@@ -1365,10 +1420,13 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       newSheet.title = title;
       const projectId = `project-${Date.now()}`;
       const project = projectFromSheet(projectId, title, newSheet, false);
+      const rootTopicId = project.sheetsById[project.activeSheetId]!.rootTopicId;
 
-      setProjects((current) => [...current, project]);
-      setActiveProjectId(projectId);
-      setSelectedTopicId(newSheet.rootTopicId);
+      flushSync(() => {
+         setProjects((current) => [...current, project]);
+         setActiveProjectId(projectId);
+         setSelectedTopicId(rootTopicId);
+      });
       revealNavHint();
    };
 
@@ -1395,7 +1453,13 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    }
 
    if (!activeProject || !sheet || !mapLayout) {
-      return null;
+      return (
+         <main className="app">
+            <div className="auth-page">
+               <p className="auth-page__loading">Unable to load this map.</p>
+            </div>
+         </main>
+      );
    }
 
    return (
@@ -1510,8 +1574,6 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                      setSelectedTopicId(topicId);
                   }}
                   onTopicTextChange={updateTopicText}
-                  onInsertChildAfterEdit={insertChildTopic}
-                  onInsertSiblingAfterEdit={insertSiblingTopic}
                   onOpenNotesPanel={openNotesPanelFor}
                   onOpenLabelsPanel={openLabelsPanelFor}
                   onOpenLink={(_topicId, url) => openExternalLink(url)}
