@@ -19,6 +19,7 @@ export function useDebouncedSave<T>(
 
     if (skipFirst.current) {
       skipFirst.current = false;
+      setStatus('saved');
       return;
     }
 

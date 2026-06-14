@@ -14,8 +14,6 @@ interface BottomPanelProps {
   activeSheetId: SheetId;
   topicCount: number;
   zoom: number;
-  saveStatus?: 'idle' | 'saving' | 'saved' | 'error';
-  onSignOut?: () => void;
   onSelectSheet: (sheetId: SheetId) => void;
   onRenameSheet: (sheetId: SheetId, title: string) => void;
   onDuplicateSheet: (sheetId: SheetId) => void;
@@ -27,19 +25,6 @@ interface BottomPanelProps {
 function truncateTitle(title: string, maxLength = 28): string {
   if (title.length <= maxLength) return title;
   return `${title.slice(0, maxLength - 1)}…`;
-}
-
-function saveStatusLabel(status: BottomPanelProps['saveStatus']): string | null {
-  switch (status) {
-    case 'saving':
-      return 'Saving…';
-    case 'saved':
-      return 'Saved';
-    case 'error':
-      return 'Save failed';
-    default:
-      return null;
-  }
 }
 
 function buildSheetLink(projectId: string, sheetId: SheetId): string {
@@ -139,8 +124,6 @@ export function BottomPanel({
   activeSheetId,
   topicCount,
   zoom,
-  saveStatus,
-  onSignOut,
   onSelectSheet,
   onRenameSheet,
   onDuplicateSheet,
@@ -233,28 +216,8 @@ export function BottomPanel({
             <span className="bottom-panel__divider" aria-hidden="true" />
           </>
         ) : null}
-        {saveStatusLabel(saveStatus) ? (
-          <>
-            <span
-              className={`bottom-panel__save-status${
-                saveStatus === 'error' ? ' bottom-panel__save-status--error' : ''
-              }`}
-            >
-              {saveStatusLabel(saveStatus)}
-            </span>
-            <span className="bottom-panel__divider" aria-hidden="true" />
-          </>
-        ) : null}
         <span className="bottom-panel__topic-count">Topics: {topicCount}</span>
         <span className="bottom-panel__divider" aria-hidden="true" />
-        {onSignOut ? (
-          <>
-            <button type="button" className="bottom-panel__sign-out" onClick={onSignOut}>
-              Sign out
-            </button>
-            <span className="bottom-panel__divider" aria-hidden="true" />
-          </>
-        ) : null}
         <div className="bottom-panel__zoom" ref={zoomRef}>
           <button
             type="button"

@@ -5,6 +5,7 @@ import { bracketChildGap, bracketEdges, rootEdgePath } from './edges';
 import { connectorStrokeColor } from './theme';
 import type { Point, RootFanRoute, RootSide } from './edges';
 import { getVisibleChildren, measureSheet } from './measure';
+import { gapBetweenSiblings } from './boundaryLayout';
 import type {
    EdgeLayout,
    LayoutResult,
@@ -113,6 +114,29 @@ function computeBranchIndices(sheet: Sheet): Map<TopicId, number> {
    return indices;
 }
 
+function stackedSideHeight(
+   sheet: Sheet,
+   parentId: TopicId,
+   children: Topic[],
+   measurements: Map<TopicId, NodeMeasurement>,
+   depth: number,
+   defaultSpacing: number,
+): number {
+   const parent = sheet.topicsById[parentId];
+   if (!parent || children.length === 0) return 0;
+
+   let total = 0;
+   for (let i = 0; i < children.length; i++) {
+      const child = children[i]!;
+      total += subtreeBlockHeight(sheet, child.id, measurements, depth);
+      if (i < children.length - 1) {
+         const afterIndex = parent.childrenIds.indexOf(child.id);
+         total += gapBetweenSiblings(sheet, parentId, afterIndex, defaultSpacing);
+      }
+   }
+   return total;
+}
+
 function spacingForDepth(depth: number): { v: number } {
    if (depth <= 1) return { v: MAIN_BRANCH_V };
    return { v: CHILD_BRANCH_V };
@@ -136,12 +160,16 @@ function subtreeBlockHeight(
       return ownHeight;
    }
 
-   const { v } = spacingForDepth(depth + 1);
+   const { v: baseV } = spacingForDepth(depth + 1);
    let childrenTotal = 0;
-   for (const child of children) {
+   for (let i = 0; i < children.length; i++) {
+      const child = children[i]!;
       childrenTotal += subtreeBlockHeight(sheet, child.id, measurements, depth + 1);
+      if (i < children.length - 1) {
+         const afterIndex = topic.childrenIds.indexOf(child.id);
+         childrenTotal += gapBetweenSiblings(sheet, topicId, afterIndex, baseV);
+      }
    }
-   childrenTotal += (children.length - 1) * v;
    return Math.max(ownHeight, childrenTotal);
 }
 
@@ -191,7 +219,7 @@ function layoutBranch(
 
    const children = getVisibleChildren(sheet, topic);
    const blockHeight = subtreeBlockHeight(sheet, topicId, measurements, depth);
-   const { v } = spacingForDepth(depth + 1);
+   const { v: baseV } = spacingForDepth(depth + 1);
    const h =
       depth === 0 ? MAIN_BRANCH_H : bracketChildGap(depth, children.length);
 
@@ -258,10 +286,9 @@ function layoutBranch(
    }
 
    let childTop = blockTopY;
-   for (const child of children) {
+   for (let i = 0; i < children.length; i++) {
+      const child = children[i]!;
       const childBlockHeight = subtreeBlockHeight(sheet, child.id, measurements, depth + 1);
-      // Right-growing: anchorX is the parent's left edge.
-      // Left-growing: anchorX is the parent's right edge — children go further left.
       const childAnchorX =
          direction === 'right'
             ? anchorX + measurement.width + h
@@ -278,7 +305,17 @@ function layoutBranch(
          measurements,
          nodes,
       );
-      childTop += childBlockHeight + v;
+
+      const gap =
+         i < children.length - 1
+            ? gapBetweenSiblings(
+                 sheet,
+                 topicId,
+                 topic.childrenIds.indexOf(child.id),
+                 baseV,
+              )
+            : 0;
+      childTop += childBlockHeight + gap;
    }
 
    const x = direction === 'right' ? anchorX : anchorX - measurement.width;
@@ -551,20 +588,36 @@ export function layoutMindmap(
       else rightChildren.push(child);
    }
 
-   const leftSpacing = level1SideSpacing(sheet, leftChildren, measurements, rootMeasurement.height);
-   const rightSpacing = level1SideSpacing(sheet, rightChildren, measurements, rootMeasurement.height);
+   const leftDefaultSpacing = level1SideSpacing(
+      sheet,
+      leftChildren,
+      measurements,
+      rootMeasurement.height,
+   );
+   const rightDefaultSpacing = level1SideSpacing(
+      sheet,
+      rightChildren,
+      measurements,
+      rootMeasurement.height,
+   );
 
-   const leftHeight =
-      leftChildren.reduce(
-         (sum, child) => sum + subtreeBlockHeight(sheet, child.id, measurements, 1),
-         0,
-      ) + Math.max(0, leftChildren.length - 1) * leftSpacing;
+   const leftHeight = stackedSideHeight(
+      sheet,
+      sheet.rootTopicId,
+      leftChildren,
+      measurements,
+      1,
+      leftDefaultSpacing,
+   );
 
-   const rightHeight =
-      rightChildren.reduce(
-         (sum, child) => sum + subtreeBlockHeight(sheet, child.id, measurements, 1),
-         0,
-      ) + Math.max(0, rightChildren.length - 1) * rightSpacing;
+   const rightHeight = stackedSideHeight(
+      sheet,
+      sheet.rootTopicId,
+      rightChildren,
+      measurements,
+      1,
+      rightDefaultSpacing,
+   );
 
    const maxSideHeight = Math.max(leftHeight, rightHeight, rootMeasurement.height);
    const rootX = -rootMeasurement.width / 2;
@@ -586,7 +639,8 @@ export function layoutMindmap(
    const rightAnchorX = rootX + rootMeasurement.width + MAIN_BRANCH_H;
    let rightTop = rootY + rootMeasurement.height / 2 - rightHeight / 2;
 
-   for (const child of rightChildren) {
+   for (let i = 0; i < rightChildren.length; i++) {
+      const child = rightChildren[i]!;
       const childBlockHeight = subtreeBlockHeight(sheet, child.id, measurements, 1);
       const branchIndex = branchIndices.get(child.id) ?? 0;
       layoutBranch(
@@ -600,13 +654,23 @@ export function layoutMindmap(
          measurements,
          nodes,
       );
-      rightTop += childBlockHeight + rightSpacing;
+      const gap =
+         i < rightChildren.length - 1
+            ? gapBetweenSiblings(
+                 sheet,
+                 sheet.rootTopicId,
+                 root.childrenIds.indexOf(child.id),
+                 rightDefaultSpacing,
+              )
+            : 0;
+      rightTop += childBlockHeight + gap;
    }
 
    const leftAnchorX = rootX - MAIN_BRANCH_H;
    let leftTop = rootY + rootMeasurement.height / 2 - leftHeight / 2;
 
-   for (const child of leftChildren) {
+   for (let i = 0; i < leftChildren.length; i++) {
+      const child = leftChildren[i]!;
       const childBlockHeight = subtreeBlockHeight(sheet, child.id, measurements, 1);
       const branchIndex = branchIndices.get(child.id) ?? 0;
       layoutBranch(
@@ -620,7 +684,16 @@ export function layoutMindmap(
          measurements,
          nodes,
       );
-      leftTop += childBlockHeight + leftSpacing;
+      const gap =
+         i < leftChildren.length - 1
+            ? gapBetweenSiblings(
+                 sheet,
+                 sheet.rootTopicId,
+                 root.childrenIds.indexOf(child.id),
+                 leftDefaultSpacing,
+              )
+            : 0;
+      leftTop += childBlockHeight + gap;
    }
 
    for (const floatingId of sheet.floatingTopicIds) {

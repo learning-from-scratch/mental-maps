@@ -1,4 +1,4 @@
-import { produce } from 'immer';
+import { produceWithPatches, type Patch } from 'immer';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { addChild, addSibling, deleteTopics } from '@/core/commands/commands';
@@ -18,10 +18,12 @@ import {
    createTopicLinkRef,
    topicDisplayText,
 } from '@/core/model/link';
-import type { Sheet, SheetId, TopicId, MarkerId, Vec2, Relationship } from '@/core/model/types';
+import type { Sheet, SheetId, TopicId, MarkerId, Vec2, Relationship, Boundary } from '@/core/model/types';
+import { boundariesFromSelection, boundaryMatchesSelection } from '@/core/model/boundaries';
 import { createRelationship } from '@/core/model/relationships';
 import { createSampleDocument } from '@/demo/sampleDocument';
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
+import { useSheetUndo } from '@/hooks/useSheetUndo';
 import {
    DEFAULT_MAP_THEME_ID,
    branchColorForIndex,
@@ -33,11 +35,14 @@ import { confirmRelationshipGeometry } from '@/layout/relationshipGeometry';
 import type { LayoutResult } from '@/layout/types';
 import { clearMeasureCache } from '@/layout/measure';
 import {
-   isViewportNavHintDismissed,
-   markViewportNavHintDismissed,
+   isSheetNavHintDismissed,
+   markAllSheetsNavHintDismissed,
+   markSheetNavHintDismissed,
+   wasLegacyNavHintGloballyDismissed,
 } from '@/prefs/viewportNavHint';
-import { createMap, listMaps, loadMap, saveMap } from '@/persistence/maps';
+import { createMap, deleteMap, listMaps, loadMap, saveMap } from '@/persistence/maps';
 import { MindMapCanvas } from '@/view/canvas/MindMapCanvas';
+import { mergeSelection, toggleTopicInSelection } from '@/view/canvas/selection';
 import type { RelationshipDraft } from '@/view/relationship/RelationshipLayer';
 import { Viewport, type ViewportState } from '@/view/canvas/Viewport';
 import { isExternalLinkConfirmSkipped } from '@/prefs/externalLinkConfirm';
@@ -54,6 +59,7 @@ import { TopicEquationPanel } from '@/view/topic/TopicEquationPanel';
 import { TopicNotesPanel } from '@/view/topic/TopicNotesPanel';
 import { RightSidebars } from '@/view/sidebar/RightSidebars';
 import { BottomPanel } from '@/view/status/BottomPanel';
+import { RecentsModal } from '@/view/home/RecentsModal';
 import { FloatingToolbar } from '@/view/toolbar/FloatingToolbar';
 
 interface AppProps {
@@ -188,27 +194,15 @@ function findInsertedTopicId(before: Sheet, after: Sheet): TopicId | null {
    return null;
 }
 
-function nextSelectionAfterDelete(sheet: Sheet, topicId: TopicId): TopicId | null {
-   const topic = sheet.topicsById[topicId];
-   if (!topic || topic.id === sheet.rootTopicId) return topic?.id ?? null;
-
-   if (!topic.parentId) return sheet.rootTopicId;
-
-   const parent = sheet.topicsById[topic.parentId];
-   if (!parent) return sheet.rootTopicId;
-
-   const index = parent.childrenIds.indexOf(topicId);
-   if (index === -1) return parent.id;
-
-   return parent.childrenIds[index + 1] ?? parent.childrenIds[index - 1] ?? parent.id;
-}
-
 function createLocalSampleProject(): ProjectState {
    const initialDoc = createSampleDocument();
    const sheetId = initialDoc.sheets[0]!;
    const preparedSheet = prepareProjectSheet(initialDoc.sheetsById[sheetId]!);
 
-   return projectFromSheet('project-sit743', 'SIT743', preparedSheet, false);
+   return {
+      ...projectFromSheet('project-sit743', 'SIT743', preparedSheet, false),
+      createdAt: initialDoc.createdAt,
+   };
 }
 
 export function App({ mode = 'local', onSignOut }: AppProps) {
@@ -218,10 +212,20 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    const [projects, setProjects] = useState<ProjectState[]>(() =>
       isCloud ? [] : [localSampleProject],
    );
+   const {
+      recordSheetChange,
+      recordSheetChanges,
+      recordSheetsByIdChange,
+      canUndo,
+      canRedo,
+      applyUndo,
+      applyRedo,
+   } = useSheetUndo();
    const [activeProjectId, setActiveProjectId] = useState(
       isCloud ? '' : localSampleProject.id,
    );
-   const [selectedTopicId, setSelectedTopicId] = useState<TopicId | null>(null);
+   const [selectedTopicIds, setSelectedTopicIds] = useState<TopicId[]>([]);
+   const primarySelectedTopicId = selectedTopicIds[selectedTopicIds.length - 1] ?? null;
    const [cloudLoading, setCloudLoading] = useState(isCloud);
    const [cloudError, setCloudError] = useState<string | null>(null);
    const urlNavigationHandled = useRef(false);
@@ -246,18 +250,23 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       y: window.innerHeight / 2,
       zoom: 1,
    }));
-   const [showNavHint, setShowNavHint] = useState(() => !isViewportNavHintDismissed());
+   const [pendingNavHintSheetIds, setPendingNavHintSheetIds] = useState<Set<SheetId>>(
+      () => new Set(),
+   );
    const [relationshipMode, setRelationshipMode] = useState<'pick-start' | 'pick-end' | null>(null);
    const [relationshipDraft, setRelationshipDraft] = useState<RelationshipDraft | null>(null);
    const [selectedRelationshipId, setSelectedRelationshipId] = useState<string | null>(null);
+   const [selectedBoundaryId, setSelectedBoundaryId] = useState<string | null>(null);
+   const [showHome, setShowHome] = useState(false);
 
-   const dismissNavHint = useCallback(() => {
-      setShowNavHint(false);
-      markViewportNavHintDismissed();
-   }, []);
-
-   const revealNavHint = useCallback(() => {
-      setShowNavHint(true);
+   const queueNavHintForSheet = useCallback((sheetId: SheetId) => {
+      if (isSheetNavHintDismissed(sheetId)) return;
+      setPendingNavHintSheetIds((current) => {
+         if (current.has(sheetId)) return current;
+         const next = new Set(current);
+         next.add(sheetId);
+         return next;
+      });
    }, []);
 
    useEffect(() => {
@@ -278,21 +287,29 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                const id = await createMap(empty);
                if (cancelled) return;
 
-               const project = { ...empty, id };
+               const project = { ...empty, id, createdAt: Date.now() };
                setProjects([project]);
                setActiveProjectId(id);
-               setSelectedTopicId(null);
-               revealNavHint();
+               setSelectedTopicIds([]);
+               queueNavHintForSheet(project.activeSheetId);
                return;
             }
 
-            const loaded = await Promise.all(summaries.map((summary) => loadMap(summary.id)));
+            const loaded = await Promise.all(
+               summaries.map(async (summary) => {
+                  const project = await loadMap(summary.id);
+                  return {
+                     ...project,
+                     createdAt: new Date(summary.createdAt).getTime(),
+                  };
+               }),
+            );
             if (cancelled) return;
 
             const first = loaded[0]!;
             setProjects(loaded);
             setActiveProjectId(first.id);
-            setSelectedTopicId(null);
+            setSelectedTopicIds([]);
          } catch (error) {
             if (!cancelled) {
                setCloudError(error instanceof Error ? error.message : 'Failed to load maps');
@@ -305,7 +322,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       return () => {
          cancelled = true;
       };
-   }, [isCloud]);
+   }, [isCloud, queueNavHintForSheet]);
 
    useEffect(() => {
       if (urlNavigationHandled.current || cloudLoading || projects.length === 0) return;
@@ -336,10 +353,37 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             entry.id === project.id ? { ...entry, activeSheetId: sheetId } : entry,
          ),
       );
-      setSelectedTopicId(null);
+      setSelectedTopicIds([]);
    }, [cloudLoading, projects, activeProjectId]);
 
    const activeProject = projects.find((project) => project.id === activeProjectId) ?? projects[0];
+   const activeSheetId = activeProject?.activeSheetId;
+   const showNavHint = Boolean(
+      activeSheetId &&
+         pendingNavHintSheetIds.has(activeSheetId) &&
+         !isSheetNavHintDismissed(activeSheetId),
+   );
+
+   const dismissNavHint = useCallback(() => {
+      if (!activeSheetId) return;
+
+      markSheetNavHintDismissed(activeSheetId);
+      setPendingNavHintSheetIds((current) => {
+         if (!current.has(activeSheetId)) return current;
+         const next = new Set(current);
+         next.delete(activeSheetId);
+         return next;
+      });
+   }, [activeSheetId]);
+
+   const legacyNavHintMigrated = useRef(false);
+   useEffect(() => {
+      if (legacyNavHintMigrated.current || projects.length === 0) return;
+      legacyNavHintMigrated.current = true;
+      if (!wasLegacyNavHintGloballyDismissed()) return;
+      markAllSheetsNavHintDismissed(projects.flatMap((project) => project.sheets));
+   }, [projects]);
+
    const rawSheet = activeProject?.sheetsById[activeProject.activeSheetId];
    const sheet = useMemo(
       () => (rawSheet ? normalizeSheet(rawSheet) : undefined),
@@ -410,28 +454,38 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
          : undefined;
 
    const updateActiveSheet = useCallback(
-      (recipe: (sheet: Sheet) => void) => {
+      (recipe: (sheet: Sheet) => void, options?: { recordUndo?: boolean }) => {
          setProjects((current) =>
             current.map((project) => {
                if (project.id !== activeProjectId) return project;
 
-               const activeSheet = project.sheetsById[project.activeSheetId];
+               const sheetId = project.activeSheetId;
+               const activeSheet = project.sheetsById[sheetId];
                if (!activeSheet) return project;
+
+               const [nextSheet, patches, inversePatches] = produceWithPatches(
+                  activeSheet,
+                  (draft) => {
+                     ensureSheetArrays(draft);
+                     recipe(draft);
+                  },
+               );
+
+               if (options?.recordUndo !== false && patches.length > 0) {
+                  recordSheetChange(project.id, sheetId, patches, inversePatches);
+               }
 
                return {
                   ...project,
                   sheetsById: {
                      ...project.sheetsById,
-                     [project.activeSheetId]: produce(activeSheet, (draft) => {
-                        ensureSheetArrays(draft);
-                        recipe(draft);
-                     }),
+                     [sheetId]: nextSheet,
                   },
                };
             }),
          );
       },
-      [activeProjectId],
+      [activeProjectId, recordSheetChange],
    );
 
    const selectMapTheme = (themeId: string) => {
@@ -585,30 +639,37 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
          current.map((project) => {
             if (project.id !== activeProjectId) return project;
 
+            const changes: Array<{
+               sheetId: SheetId;
+               patches: Patch[];
+               inversePatches: Patch[];
+            }> = [];
             const sheetsById = { ...project.sheetsById };
+
             for (const { sheetId, topicId, topicLink } of updates) {
                const targetSheet = sheetsById[sheetId];
                if (!targetSheet) continue;
-               sheetsById[sheetId] = produce(targetSheet, (draft) => {
-                  const topic = draft.topicsById[topicId];
-                  if (topic) topic.topicLink = topicLink;
-               });
+
+               const [nextSheet, patches, inversePatches] = produceWithPatches(
+                  targetSheet,
+                  (draft) => {
+                     const topic = draft.topicsById[topicId];
+                     if (topic) topic.topicLink = topicLink;
+                  },
+               );
+               sheetsById[sheetId] = nextSheet;
+               if (patches.length > 0) {
+                  changes.push({ sheetId, patches, inversePatches });
+               }
+            }
+
+            if (changes.length > 0) {
+               recordSheetChanges(project.id, { sheetChanges: changes });
             }
 
             return { ...project, sheetsById };
          }),
       );
-   };
-
-   const expandAncestorsInSheet = (targetSheet: Sheet, topicId: TopicId): Sheet => {
-      return produce(targetSheet, (draft) => {
-         let current = draft.topicsById[topicId];
-         while (current?.parentId) {
-            const parent = draft.topicsById[current.parentId];
-            if (parent) parent.collapsed = false;
-            current = parent;
-         }
-      });
    };
 
    const removeTopicNote = (topicId: TopicId) => {
@@ -690,7 +751,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
          fromTopic.equation = undefined;
       });
       setEquationSelectedTopicId(toTopicId);
-      setSelectedTopicId(toTopicId);
+      setSelectedTopicIds([toTopicId]);
    };
 
    const removeTopicEquation = (topicId: TopicId) => {
@@ -726,6 +787,68 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       setTopicLinkModalTopicId(null);
    }, [dismissNotesPanel, dismissLabelPanel, dismissEquationPanel]);
 
+   const applyTopicPanelDismissals = useCallback(
+      (topicId: TopicId) => {
+         if (notesPanelTopicId && notesPanelTopicId !== topicId) {
+            dismissNotesPanel();
+         }
+         if (labelPanelTopicId && labelPanelTopicId !== topicId) {
+            dismissLabelPanel();
+         }
+         if (equationPanelTopicId && equationPanelTopicId !== topicId) {
+            dismissEquationPanel();
+         }
+         if (webLinkModalTopicId && webLinkModalTopicId !== topicId) {
+            setWebLinkModalTopicId(null);
+         }
+         if (topicLinkModalTopicId && topicLinkModalTopicId !== topicId) {
+            setTopicLinkModalTopicId(null);
+         }
+      },
+      [
+         notesPanelTopicId,
+         labelPanelTopicId,
+         equationPanelTopicId,
+         webLinkModalTopicId,
+         topicLinkModalTopicId,
+         dismissNotesPanel,
+         dismissLabelPanel,
+         dismissEquationPanel,
+      ],
+   );
+
+   const handleSelectTopic = useCallback(
+      (topicId: TopicId, options?: { additive?: boolean }) => {
+         applyTopicPanelDismissals(topicId);
+         setEquationSelectedTopicId(null);
+         setSelectedBoundaryId(null);
+         setSelectedTopicIds((current) =>
+            options?.additive ? toggleTopicInSelection(current, topicId) : [topicId],
+         );
+      },
+      [applyTopicPanelDismissals],
+   );
+
+   const handleSelectTopics = useCallback(
+      (topicIds: TopicId[], options?: { additive?: boolean }) => {
+         setEquationSelectedTopicId(null);
+         setSelectedBoundaryId(null);
+         if (topicIds.length === 0) {
+            setSelectedTopicIds([]);
+            return;
+         }
+         dismissTopicPanels();
+         setSelectedTopicIds((current) =>
+            options?.additive ? mergeSelection(current, topicIds) : topicIds,
+         );
+      },
+      [dismissTopicPanels],
+   );
+
+   const clearTopicSelection = useCallback(() => {
+      setSelectedTopicIds([]);
+   }, []);
+
    const insertTopicAndActivate = useCallback(
       (
          recipe: (draft: Sheet, topicId: TopicId) => void,
@@ -744,14 +867,27 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                   const activeSheet = project.sheetsById[project.activeSheetId];
                   if (!activeSheet) return project;
 
-                  const nextSheet = produce(activeSheet, (draft) => {
-                     if (options?.commitText !== undefined) {
-                        const sourceTopic = draft.topicsById[sourceTopicId];
-                        if (sourceTopic) sourceTopic.text = options.commitText;
-                     }
-                     recipe(draft, sourceTopicId);
-                  });
+                  const [nextSheet, patches, inversePatches] = produceWithPatches(
+                     activeSheet,
+                     (draft) => {
+                        if (options?.commitText !== undefined) {
+                           const sourceTopic = draft.topicsById[sourceTopicId];
+                           if (sourceTopic) sourceTopic.text = options.commitText;
+                        }
+                        ensureSheetArrays(draft);
+                        recipe(draft, sourceTopicId);
+                     },
+                  );
                   insertedTopicId = findInsertedTopicId(activeSheet, nextSheet);
+
+                  if (patches.length > 0) {
+                     recordSheetChange(
+                        project.id,
+                        project.activeSheetId,
+                        patches,
+                        inversePatches,
+                     );
+                  }
 
                   return {
                      ...project,
@@ -764,7 +900,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             );
 
             if (insertedTopicId) {
-               setSelectedTopicId(insertedTopicId);
+               setSelectedTopicIds([insertedTopicId]);
                setEditTopicId(insertedTopicId);
                setEditingTopicId(insertedTopicId);
             }
@@ -772,7 +908,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
          return insertedTopicId;
       },
-      [dismissTopicPanels],
+      [dismissTopicPanels, recordSheetChange],
    );
 
    const insertChildTopic = useCallback(
@@ -806,6 +942,110 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       setRelationshipDraft(null);
    }, []);
 
+   const handleUndo = useCallback(() => {
+      dismissTopicPanels();
+      let nextActiveSheet: Sheet | undefined;
+
+      setProjects((current) =>
+         current.map((project) => {
+            if (project.id !== activeProjectId) return project;
+
+            const nextSheetsById = applyUndo(project.id, project.sheetsById);
+            if (!nextSheetsById) return project;
+
+            nextActiveSheet = nextSheetsById[project.activeSheetId];
+            return { ...project, sheetsById: nextSheetsById };
+         }),
+      );
+
+      if (nextActiveSheet) {
+         setSelectedTopicIds((current) =>
+            current.filter((id) => Boolean(nextActiveSheet!.topicsById[id])),
+         );
+         setSelectedRelationshipId(null);
+         setSelectedBoundaryId(null);
+         cancelRelationshipMode();
+      }
+   }, [
+      activeProjectId,
+      applyUndo,
+      cancelRelationshipMode,
+      dismissTopicPanels,
+   ]);
+
+   const handleRedo = useCallback(() => {
+      dismissTopicPanels();
+      let nextActiveSheet: Sheet | undefined;
+
+      setProjects((current) =>
+         current.map((project) => {
+            if (project.id !== activeProjectId) return project;
+
+            const nextSheetsById = applyRedo(project.id, project.sheetsById);
+            if (!nextSheetsById) return project;
+
+            nextActiveSheet = nextSheetsById[project.activeSheetId];
+            return { ...project, sheetsById: nextSheetsById };
+         }),
+      );
+
+      if (nextActiveSheet) {
+         setSelectedTopicIds((current) =>
+            current.filter((id) => Boolean(nextActiveSheet!.topicsById[id])),
+         );
+         setSelectedRelationshipId(null);
+         setSelectedBoundaryId(null);
+         cancelRelationshipMode();
+      }
+   }, [
+      activeProjectId,
+      applyRedo,
+      cancelRelationshipMode,
+      dismissTopicPanels,
+   ]);
+
+   const createBlankMap = useCallback(async () => {
+      const empty = createEmptyProject();
+
+      if (isCloud) {
+         try {
+            const id = await createMap(empty);
+            const project = { ...empty, id, createdAt: Date.now() };
+            setProjects((current) => [...current, project]);
+            setActiveProjectId(id);
+            setSelectedTopicIds([]);
+            setShowHome(false);
+            queueNavHintForSheet(project.activeSheetId);
+         } catch (error) {
+            setCloudError(error instanceof Error ? error.message : 'Failed to create map');
+         }
+         return;
+      }
+
+      const projectId = `local-${Date.now()}`;
+      const project = { ...empty, id: projectId, createdAt: Date.now() };
+      setProjects((current) => [...current, project]);
+      setActiveProjectId(projectId);
+      setSelectedTopicIds([]);
+      setShowHome(false);
+      queueNavHintForSheet(project.activeSheetId);
+   }, [isCloud, queueNavHintForSheet]);
+
+   const openHome = useCallback(() => {
+      dismissTopicPanels();
+      setShowHome(true);
+   }, [dismissTopicPanels]);
+
+   const selectProject = useCallback(
+      (projectId: string) => {
+         setActiveProjectId(projectId);
+         setSelectedTopicIds([]);
+         setShowHome(false);
+         dismissTopicPanels();
+      },
+      [dismissTopicPanels],
+   );
+
    const startRelationshipMode = useCallback(() => {
       dismissTopicPanels();
       setWebLinkModalTopicId(null);
@@ -813,22 +1053,22 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       setEquationSelectedTopicId(null);
       setSelectedRelationshipId(null);
 
-      if (selectedTopicId) {
+      if (primarySelectedTopicId) {
          setRelationshipMode('pick-end');
-         setRelationshipDraft({ fromId: selectedTopicId, cursor: { x: 0, y: 0 } });
+         setRelationshipDraft({ fromId: primarySelectedTopicId, cursor: { x: 0, y: 0 } });
          return;
       }
 
       setRelationshipMode('pick-start');
       setRelationshipDraft(null);
-   }, [selectedTopicId, dismissTopicPanels]);
+   }, [primarySelectedTopicId, dismissTopicPanels]);
 
    const handleRelationshipTopicClick = useCallback(
       (topicId: TopicId) => {
          if (relationshipMode === 'pick-start') {
             setRelationshipMode('pick-end');
             setRelationshipDraft({ fromId: topicId, cursor: { x: 0, y: 0 } });
-            setSelectedTopicId(topicId);
+            setSelectedTopicIds([topicId]);
             return;
          }
 
@@ -853,7 +1093,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             setSelectedRelationshipId(relationship.id);
             setRelationshipMode(null);
             setRelationshipDraft(null);
-            setSelectedTopicId(topicId);
+            setSelectedTopicIds([topicId]);
          }
       },
       [relationshipMode, relationshipDraft, mapLayout, updateActiveSheet],
@@ -883,6 +1123,102 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       setSelectedRelationshipId(null);
    }, [selectedRelationshipId, updateActiveSheet]);
 
+   const updateBoundary = useCallback(
+      (boundaryId: string, patch: Partial<Boundary>) => {
+         updateActiveSheet((draft) => {
+            const boundary = draft.boundaries.find((item) => item.id === boundaryId);
+            if (!boundary) return;
+            Object.assign(boundary, patch);
+         });
+      },
+      [updateActiveSheet],
+   );
+
+   const deleteSelectedBoundary = useCallback(() => {
+      if (!selectedBoundaryId) return;
+      const boundaryId = selectedBoundaryId;
+      updateActiveSheet((draft) => {
+         draft.boundaries = draft.boundaries.filter((item) => item.id !== boundaryId);
+      });
+      setSelectedBoundaryId(null);
+   }, [selectedBoundaryId, updateActiveSheet]);
+
+   const addBoundaryFromSelection = useCallback(() => {
+      if (!sheet || selectedTopicIds.length === 0) return;
+
+      const candidates = boundariesFromSelection(sheet, selectedTopicIds);
+      if (candidates.length === 0) return;
+
+      const createdIds: string[] = [];
+
+      updateActiveSheet((draft) => {
+         for (const candidate of candidates) {
+            const existing = draft.boundaries.find((boundary) =>
+               boundaryMatchesSelection(boundary, candidate),
+            );
+            if (existing) {
+               createdIds.push(existing.id);
+               continue;
+            }
+
+            const id = `boundary-${crypto.randomUUID()}`;
+            draft.boundaries.push({ ...candidate, id });
+            createdIds.push(id);
+         }
+      });
+
+      if (createdIds.length > 0) {
+         setSelectedBoundaryId(createdIds[createdIds.length - 1]!);
+         setSelectedTopicIds([]);
+         dismissTopicPanels();
+      }
+   }, [sheet, selectedTopicIds, updateActiveSheet, dismissTopicPanels]);
+
+   useEffect(() => {
+      const handleKeyDown = (event: KeyboardEvent) => {
+         if (!(event.ctrlKey || event.metaKey)) return;
+
+         const target = event.target;
+         if (
+            target instanceof HTMLInputElement ||
+            target instanceof HTMLTextAreaElement ||
+            target instanceof HTMLSelectElement ||
+            (target instanceof HTMLElement && target.isContentEditable)
+         ) {
+            return;
+         }
+
+         const key = event.key.toLowerCase();
+         if (key === 'z' && !event.shiftKey) {
+            if (!canUndo(activeProjectId)) return;
+            event.preventDefault();
+            handleUndo();
+            return;
+         }
+
+         if (key === 'y') {
+            if (!canRedo(activeProjectId)) return;
+            event.preventDefault();
+            handleRedo();
+            return;
+         }
+
+         if (key === 'n') {
+            event.preventDefault();
+            createBlankMap();
+            return;
+         }
+
+         if (key === 'h') {
+            event.preventDefault();
+            openHome();
+         }
+      };
+
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+   }, [activeProjectId, canUndo, canRedo, handleUndo, handleRedo, createBlankMap, openHome]);
+
    useEffect(() => {
       const handleKeyDown = (event: KeyboardEvent) => {
          if (event.key === 'Escape' && relationshipMode) {
@@ -907,6 +1243,32 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             return;
          }
 
+         if (event.key === 'Delete' && selectedBoundaryId) {
+            const target = event.target;
+            if (
+               target instanceof HTMLInputElement ||
+               target instanceof HTMLTextAreaElement ||
+               target instanceof HTMLSelectElement ||
+               (target instanceof HTMLElement && target.isContentEditable)
+            ) {
+               return;
+            }
+
+            event.preventDefault();
+            deleteSelectedBoundary();
+            return;
+         }
+
+         if (
+            (event.ctrlKey || event.metaKey) &&
+            event.shiftKey &&
+            event.key.toLowerCase() === 'b'
+         ) {
+            event.preventDefault();
+            addBoundaryFromSelection();
+            return;
+         }
+
          if (
             (event.ctrlKey || event.metaKey) &&
             event.shiftKey &&
@@ -926,21 +1288,23 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    }, [
       relationshipMode,
       selectedRelationshipId,
+      selectedBoundaryId,
       cancelRelationshipMode,
       startRelationshipMode,
       deleteSelectedRelationship,
+      deleteSelectedBoundary,
+      addBoundaryFromSelection,
    ]);
 
    useEffect(() => {
       const handleKeyDown = (event: KeyboardEvent) => {
          if (
             !sheet ||
-            !selectedTopicId ||
+            selectedTopicIds.length === 0 ||
             editingTopicId ||
             event.altKey ||
             event.ctrlKey ||
-            event.metaKey ||
-            event.shiftKey
+            event.metaKey
          ) {
             return;
          }
@@ -957,17 +1321,13 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
          if (event.key !== 'Enter' && event.key !== 'Tab' && event.key !== 'Delete') return;
 
-         event.preventDefault();
-
          if (event.key === 'Delete') {
-            const selectedTopic = sheet.topicsById[selectedTopicId];
-            if (!selectedTopic) return;
-            if (selectedTopic.id === sheet.rootTopicId) {
-               setSelectedTopicId(selectedTopic.id);
+            event.preventDefault();
+            const toDelete = selectedTopicIds.filter((id) => id !== sheet.rootTopicId);
+            if (toDelete.length === 0) {
+               setSelectedTopicIds([sheet.rootTopicId]);
                return;
             }
-
-            const nextSelectedTopicId = nextSelectionAfterDelete(sheet, selectedTopicId);
 
             setProjects((current) =>
                current.map((project) => {
@@ -975,111 +1335,139 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
                   const activeSheetId = project.activeSheetId;
                   const activeSheet = project.sheetsById[activeSheetId];
-                  if (!activeSheet?.topicsById[selectedTopicId]) return project;
+                  if (!activeSheet) return project;
 
-                  const sheetsById = produce(project.sheetsById, (draftSheets) => {
-                     const draft = draftSheets[activeSheetId];
-                     if (!draft?.topicsById[selectedTopicId]) return;
+                  const [nextSheetsById, patches, inversePatches] = produceWithPatches(
+                     project.sheetsById,
+                     (draftSheets) => {
+                        const draft = draftSheets[activeSheetId];
+                        if (!draft) return;
 
-                     const doc = {
-                        formatVersion: 1 as const,
-                        id: project.id,
-                        title: project.title,
-                        createdAt: Date.now(),
-                        modifiedAt: Date.now(),
-                        sheets: project.sheets,
-                        sheetsById: draftSheets,
-                     };
-                     deleteTopics({ doc, sheetId: draft.id }, { topicIds: [selectedTopicId] });
-                  });
+                        const doc = {
+                           formatVersion: 1 as const,
+                           id: project.id,
+                           title: project.title,
+                           createdAt: Date.now(),
+                           modifiedAt: Date.now(),
+                           sheets: project.sheets,
+                           sheetsById: draftSheets,
+                        };
+                        deleteTopics({ doc, sheetId: draft.id }, { topicIds: toDelete });
+                     },
+                  );
 
-                  return { ...project, sheetsById };
+                  if (patches.length > 0) {
+                     recordSheetsByIdChange(project.id, patches, inversePatches);
+                  }
+
+                  return { ...project, sheetsById: nextSheetsById };
                }),
             );
 
-            setSelectedTopicId(nextSelectedTopicId);
+            setSelectedTopicIds([]);
             return;
          }
+
+         if (
+            event.shiftKey ||
+            !primarySelectedTopicId
+         ) {
+            return;
+         }
+
+         event.preventDefault();
 
          if (event.key === 'Tab') {
-            insertChildTopic(selectedTopicId);
+            insertChildTopic(primarySelectedTopicId);
             return;
          }
 
-         insertSiblingTopic(selectedTopicId);
+         if (event.key === 'Enter') {
+            insertSiblingTopic(primarySelectedTopicId);
+         }
       };
 
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-   }, [selectedTopicId, sheet, editingTopicId, insertChildTopic, insertSiblingTopic, updateActiveSheet]);
+   }, [
+      selectedTopicIds,
+      primarySelectedTopicId,
+      sheet,
+      editingTopicId,
+      insertChildTopic,
+      insertSiblingTopic,
+      updateActiveSheet,
+      recordSheetChange,
+      recordSheetsByIdChange,
+   ]);
 
    const openNotesPanel = () => {
-      if (!selectedTopicId) return;
+      if (!primarySelectedTopicId) return;
       dismissLabelPanel();
       dismissEquationPanel();
       setWebLinkModalTopicId(null);
       setTopicLinkModalTopicId(null);
       setEquationSelectedTopicId(null);
-      setNotesPanelTopicId(selectedTopicId);
+      setNotesPanelTopicId(primarySelectedTopicId);
    };
 
    const openLabelPanel = () => {
-      if (!selectedTopicId) return;
+      if (!primarySelectedTopicId) return;
       dismissNotesPanel();
       dismissEquationPanel();
       setWebLinkModalTopicId(null);
       setTopicLinkModalTopicId(null);
       setEquationSelectedTopicId(null);
-      setSelectedTopicId(selectedTopicId);
-      setLabelPanelTopicId(selectedTopicId);
+      setSelectedTopicIds([primarySelectedTopicId]);
+      setLabelPanelTopicId(primarySelectedTopicId);
    };
 
    const openStickerPanel = () => {
-      if (!selectedTopicId) return;
+      if (!primarySelectedTopicId) return;
       dismissNotesPanel();
       dismissLabelPanel();
       dismissEquationPanel();
       setWebLinkModalTopicId(null);
       setTopicLinkModalTopicId(null);
       setEquationSelectedTopicId(null);
-      setSelectedTopicId(selectedTopicId);
+      setSelectedTopicIds([primarySelectedTopicId]);
       setStickerPanelRequest((count) => count + 1);
    };
 
    const openEquationPanel = (topicId?: TopicId) => {
-      const targetId = topicId ?? selectedTopicId;
+      const targetId = topicId ?? primarySelectedTopicId;
       if (!targetId) return;
       dismissNotesPanel();
       dismissLabelPanel();
       setWebLinkModalTopicId(null);
       setTopicLinkModalTopicId(null);
       setEquationSelectedTopicId(null);
-      setSelectedTopicId(targetId);
+      setSelectedTopicIds([targetId]);
       setEquationPanelTopicId(targetId);
    };
 
    const openWebLinkModal = (topicId?: TopicId, kind: TopicLinkKind = 'webpage') => {
-      const targetId = topicId ?? selectedTopicId;
+      const targetId = topicId ?? primarySelectedTopicId;
       if (!targetId) return;
       dismissNotesPanel();
       dismissLabelPanel();
       dismissEquationPanel();
       setTopicLinkModalTopicId(null);
       setEquationSelectedTopicId(null);
-      setSelectedTopicId(targetId);
+      setSelectedTopicIds([targetId]);
       setWebLinkModalKind(kind === 'topic' ? 'webpage' : kind);
       setWebLinkModalTopicId(targetId);
    };
 
    const openTopicLinkModal = (topicId?: TopicId) => {
-      const targetId = topicId ?? selectedTopicId;
+      const targetId = topicId ?? primarySelectedTopicId;
       if (!targetId || !sheet) return;
       dismissNotesPanel();
       dismissLabelPanel();
       dismissEquationPanel();
       setWebLinkModalTopicId(null);
       setEquationSelectedTopicId(null);
-      setSelectedTopicId(targetId);
+      setSelectedTopicIds([targetId]);
       setTopicLinkModalTopicId(targetId);
    };
 
@@ -1173,25 +1561,38 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
          const targetSheet = activeProject.sheetsById[targetSheetId];
          if (!targetSheet) return;
 
-         const expandedSheet = expandAncestorsInSheet(targetSheet, targetTopicId);
+         const [nextSheet, patches, inversePatches] = produceWithPatches(
+            targetSheet,
+            (draft) => {
+               let current = draft.topicsById[targetTopicId];
+               while (current?.parentId) {
+                  const parent = draft.topicsById[current.parentId];
+                  if (parent) parent.collapsed = false;
+                  current = parent;
+               }
+            },
+         );
 
          setProjects((current) =>
             current.map((project) => {
                if (project.id !== activeProjectId) return project;
+               if (patches.length > 0) {
+                  recordSheetChange(project.id, targetSheetId, patches, inversePatches);
+               }
                return {
                   ...project,
                   activeSheetId: targetSheetId,
                   sheetsById: {
                      ...project.sheetsById,
-                     [targetSheetId]: expandedSheet,
+                     [targetSheetId]: nextSheet,
                   },
                };
             }),
          );
-         setSelectedTopicId(targetTopicId);
+         setSelectedTopicIds([targetTopicId]);
 
          window.setTimeout(() => {
-            focusTopicInViewport(targetTopicId, expandedSheet);
+            focusTopicInViewport(targetTopicId, nextSheet);
          }, 0);
       },
       [
@@ -1200,6 +1601,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
          activeProjectId,
          dismissTopicPanels,
          focusTopicInViewport,
+         recordSheetChange,
       ],
    );
 
@@ -1231,7 +1633,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       setWebLinkModalTopicId(null);
       setTopicLinkModalTopicId(null);
       setEquationSelectedTopicId(null);
-      setSelectedTopicId(topicId);
+      setSelectedTopicIds([topicId]);
       setNotesPanelTopicId(topicId);
    };
 
@@ -1244,7 +1646,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       setWebLinkModalTopicId(null);
       setTopicLinkModalTopicId(null);
       setEquationSelectedTopicId(null);
-      setSelectedTopicId(topicId);
+      setSelectedTopicIds([topicId]);
       setLabelPanelTopicId(topicId);
    };
 
@@ -1257,7 +1659,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       setWebLinkModalTopicId(null);
       setTopicLinkModalTopicId(null);
       setEquationSelectedTopicId(null);
-      setSelectedTopicId(topicId);
+      setSelectedTopicIds([topicId]);
       setEquationPanelTopicId(topicId);
    };
 
@@ -1282,26 +1684,13 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       };
    }, [topicLinkTopic]);
 
-   const selectProject = (projectId: string) => {
-      const project = projects.find((candidate) => candidate.id === projectId);
-      if (!project) return;
-
-      dismissTopicPanels();
-      setExternalLinkUrl(null);
-      setEquationSelectedTopicId(null);
-      setSelectedRelationshipId(null);
-      cancelRelationshipMode();
-      setActiveProjectId(project.id);
-      setSelectedTopicId(null);
-   };
-
    const selectSheet = (sheetId: SheetId) => {
       setProjects((current) =>
          current.map((project) =>
             project.id === activeProjectId ? { ...project, activeSheetId: sheetId } : project,
          ),
       );
-      setSelectedTopicId(null);
+      setSelectedTopicIds([]);
    };
 
    const duplicateSheetInProject = (sheetId: SheetId) => {
@@ -1322,7 +1711,8 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                : project,
          ),
       );
-      setSelectedTopicId(null);
+      setSelectedTopicIds([]);
+      queueNavHintForSheet(copy.id);
    };
 
    const deleteSheet = (sheetId: SheetId) => {
@@ -1353,7 +1743,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       );
 
       if (wasActive) {
-         setSelectedTopicId(null);
+         setSelectedTopicIds([]);
       }
    };
 
@@ -1392,43 +1782,93 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                : project,
          ),
       );
-      setSelectedTopicId(newSheet.rootTopicId);
-      revealNavHint();
+      setSelectedTopicIds([newSheet.rootTopicId]);
+      queueNavHintForSheet(newSheet.id);
    };
 
-   const createProject = async () => {
-      const nextIndex = projects.length + 1;
-      const title = `Project ${nextIndex}`;
+   const renameProject = useCallback(
+      (title: string) => {
+         const trimmed = title.trim();
+         if (!trimmed || !activeProjectId) return;
 
-      if (isCloud) {
-         const empty = createEmptyProject(title);
-         const id = await createMap(empty);
-         const project = { ...empty, id };
-         const rootTopicId = project.sheetsById[project.activeSheetId]!.rootTopicId;
+         setProjects((current) =>
+            current.map((project) =>
+               project.id === activeProjectId ? { ...project, title: trimmed } : project,
+            ),
+         );
+      },
+      [activeProjectId],
+   );
 
-         flushSync(() => {
-            setProjects((current) => [...current, project]);
-            setActiveProjectId(id);
-            setSelectedTopicId(rootTopicId);
-         });
-         revealNavHint();
-         return;
-      }
+   const renameProjectById = useCallback(
+      async (projectId: string, title: string) => {
+         const trimmed = title.trim();
+         if (!trimmed) return;
 
-      const doc = createSampleDocument();
-      const newSheet = prepareProjectSheet(doc.sheetsById[doc.sheets[0]!]!);
-      newSheet.title = title;
-      const projectId = `project-${Date.now()}`;
-      const project = projectFromSheet(projectId, title, newSheet, false);
-      const rootTopicId = project.sheetsById[project.activeSheetId]!.rootTopicId;
+         const existing = projects.find((project) => project.id === projectId);
+         if (!existing || existing.title === trimmed) return;
 
-      flushSync(() => {
-         setProjects((current) => [...current, project]);
-         setActiveProjectId(projectId);
-         setSelectedTopicId(rootTopicId);
-      });
-      revealNavHint();
-   };
+         const updatedProject = { ...existing, title: trimmed };
+         setProjects((current) =>
+            current.map((project) => (project.id === projectId ? updatedProject : project)),
+         );
+
+         if (!isCloud) return;
+
+         try {
+            await saveMap(projectId, updatedProject);
+         } catch (error) {
+            setCloudError(error instanceof Error ? error.message : 'Failed to rename project');
+         }
+      },
+      [isCloud, projects],
+   );
+
+   const removeProject = useCallback(
+      async (projectId: string) => {
+         const remaining = projects.filter((project) => project.id !== projectId);
+         const isRemovingActive = activeProjectId === projectId;
+
+         if (isCloud) {
+            try {
+               await deleteMap(projectId);
+            } catch (error) {
+               setCloudError(error instanceof Error ? error.message : 'Failed to remove project');
+               return;
+            }
+         }
+
+         if (remaining.length === 0) {
+            const empty = createEmptyProject();
+            if (isCloud) {
+               try {
+                  const id = await createMap(empty);
+                  const project = { ...empty, id, createdAt: Date.now() };
+                  setProjects([project]);
+                  setActiveProjectId(id);
+                  setSelectedTopicIds([]);
+               } catch (error) {
+                  setCloudError(error instanceof Error ? error.message : 'Failed to create project');
+               }
+               return;
+            }
+
+            const localId = `local-${Date.now()}`;
+            const project = { ...empty, id: localId, createdAt: Date.now() };
+            setProjects([project]);
+            setActiveProjectId(localId);
+            setSelectedTopicIds([]);
+            return;
+         }
+
+         setProjects(remaining);
+         if (isRemovingActive) {
+            setActiveProjectId(remaining[0]!.id);
+            setSelectedTopicIds([]);
+         }
+      },
+      [activeProjectId, isCloud, projects],
+   );
 
    if (cloudLoading) {
       return (
@@ -1466,19 +1906,27 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       <main className="app">
          <div className="app__workspace">
             <FloatingToolbar
-               selectedTopicId={selectedTopicId}
-               projects={projects.map((project) => ({ id: project.id, title: project.title }))}
-               activeProjectId={activeProjectId}
-               onSelectProject={selectProject}
-               onCreateProject={createProject}
+               selectedTopicId={primarySelectedTopicId}
+               projectTitle={activeProject.title}
+               onRenameProject={renameProject}
+               saveStatus={isCloud ? saveStatus : undefined}
+               canUndo={canUndo(activeProjectId)}
+               canRedo={canRedo(activeProjectId)}
+               onUndo={handleUndo}
+               onRedo={handleRedo}
+               onNewBlankMap={createBlankMap}
+               onOpenHome={openHome}
+               onSignOut={onSignOut}
                onInsertSibling={() => {
-                  if (selectedTopicId) insertSiblingTopic(selectedTopicId);
+                  if (primarySelectedTopicId) insertSiblingTopic(primarySelectedTopicId);
                }}
                onInsertChild={() => {
-                  if (selectedTopicId) insertChildTopic(selectedTopicId);
+                  if (primarySelectedTopicId) insertChildTopic(primarySelectedTopicId);
                }}
                onAddRelationship={startRelationshipMode}
                relationshipModeActive={relationshipMode !== null}
+               onAddBoundary={addBoundaryFromSelection}
+               hasTopicSelection={selectedTopicIds.length > 0}
                onAddContent={openNotesPanel}
                onAddLabel={openLabelPanel}
                onAddWebpage={() => openWebLinkModal(undefined, 'webpage')}
@@ -1502,8 +1950,9 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                   setTopicLinkModalTopicId(null);
                   setExternalLinkUrl(null);
                   setEquationSelectedTopicId(null);
-                  setSelectedTopicId(null);
+                  clearTopicSelection();
                   setSelectedRelationshipId(null);
+                  setSelectedBoundaryId(null);
                   cancelRelationshipMode();
                }}
                overlay={
@@ -1549,30 +1998,14 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             >
                <MindMapCanvas
                   sheet={sheet}
-                  selectedTopicId={selectedTopicId}
+                  selectedTopicIds={selectedTopicIds}
                   editTopicId={editTopicId}
                   onEditTopicIdConsumed={() => setEditTopicId(null)}
                   onEditingTopicChange={setEditingTopicId}
                   themeId={mapThemeId}
-                  onSelectTopic={(topicId) => {
-                     if (notesPanelTopicId && notesPanelTopicId !== topicId) {
-                        dismissNotesPanel();
-                     }
-                     if (labelPanelTopicId && labelPanelTopicId !== topicId) {
-                        dismissLabelPanel();
-                     }
-                     if (equationPanelTopicId && equationPanelTopicId !== topicId) {
-                        dismissEquationPanel();
-                     }
-                     if (webLinkModalTopicId && webLinkModalTopicId !== topicId) {
-                        setWebLinkModalTopicId(null);
-                     }
-                     if (topicLinkModalTopicId && topicLinkModalTopicId !== topicId) {
-                        setTopicLinkModalTopicId(null);
-                     }
-                     setEquationSelectedTopicId(null);
-                     setSelectedTopicId(topicId);
-                  }}
+                  onSelectTopic={handleSelectTopic}
+                  onSelectTopics={handleSelectTopics}
+                  onClearTopicSelection={clearTopicSelection}
                   onTopicTextChange={updateTopicText}
                   onOpenNotesPanel={openNotesPanelFor}
                   onOpenLabelsPanel={openLabelsPanelFor}
@@ -1614,11 +2047,21 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                   onSelectRelationship={(relationshipId) => {
                      setSelectedRelationshipId(relationshipId);
                      if (relationshipId) {
-                        setSelectedTopicId(null);
+                        setSelectedTopicIds([]);
                         dismissTopicPanels();
                      }
                   }}
                   onUpdateRelationship={updateRelationship}
+                  selectedBoundaryId={selectedBoundaryId}
+                  onSelectBoundary={(boundaryId) => {
+                     setSelectedBoundaryId(boundaryId);
+                     if (boundaryId) {
+                        setSelectedTopicIds([]);
+                        setSelectedRelationshipId(null);
+                        dismissTopicPanels();
+                     }
+                  }}
+                  onUpdateBoundary={updateBoundary}
                />
             </Viewport>
             <RightSidebars
@@ -1626,17 +2069,17 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                canvasDotsEnabled={canvasDotsEnabled}
                onCanvasDotsChange={handleCanvasDotsChange}
                onSelectTheme={selectMapTheme}
-               selectedTopicId={selectedTopicId}
+               selectedTopicId={primarySelectedTopicId}
                rootTopicId={sheet.rootTopicId}
                selectedTopicMarkers={
-                  selectedTopicId && sheet ? sheet.topicsById[selectedTopicId]?.markers ?? [] : []
+                  primarySelectedTopicId && sheet ? sheet.topicsById[primarySelectedTopicId]?.markers ?? [] : []
                }
                stickerPanelRequest={stickerPanelRequest}
                stickerLegendVisible={sheet.stickerLegend?.visible ?? false}
                onToggleStickerLegend={toggleStickerLegend}
                onSelectSticker={(stickerId) => {
-                  if (!selectedTopicId) return;
-                  updateTopicSticker(selectedTopicId, stickerId);
+                  if (!primarySelectedTopicId) return;
+                  updateTopicSticker(primarySelectedTopicId, stickerId);
                }}
             />
             <BottomPanel
@@ -1646,8 +2089,6 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                activeSheetId={activeProject.activeSheetId}
                topicCount={topicCount}
                zoom={viewport.zoom}
-               saveStatus={isCloud ? saveStatus : undefined}
-               onSignOut={onSignOut}
                onSelectSheet={selectSheet}
                onRenameSheet={renameSheet}
                onDuplicateSheet={duplicateSheetInProject}
@@ -1656,6 +2097,26 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                onZoomChange={setZoom}
             />
          </div>
+         {showHome ? (
+            <RecentsModal
+               projects={projects.map((project) => {
+                  const firstSheetId = project.sheets[0];
+                  const rawSheet = firstSheetId ? project.sheetsById[firstSheetId] : undefined;
+                  return {
+                     id: project.id,
+                     title: project.title,
+                     createdAt: project.createdAt,
+                     firstSheet: rawSheet ? normalizeSheet(rawSheet) : undefined,
+                  };
+               })}
+               showCloudIcon={isCloud}
+               onClose={() => setShowHome(false)}
+               onSelectProject={selectProject}
+               onNewBlankMap={createBlankMap}
+               onRenameProject={renameProjectById}
+               onRemoveProject={removeProject}
+            />
+         ) : null}
          {webLinkModalTopicId && webLinkTopic ? (
             <InsertWebLinkModal
                title={webLinkModalKind === 'cloud' ? 'Cloud Storage' : 'Insert Web Link'}

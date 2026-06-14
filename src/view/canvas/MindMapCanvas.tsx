@@ -8,7 +8,8 @@ import { collapseHandleCenterX } from '@/layout/edges';
 import { DEFAULT_MAP_THEME_ID } from '@/layout/theme';
 import { EdgeLayer } from '@/view/edge/EdgeLayer';
 import { RelationshipLayer, type RelationshipDraft } from '@/view/relationship/RelationshipLayer';
-import type { Relationship } from '@/core/model/types';
+import { BoundaryBackgroundLayer, BoundaryInteractionLayer } from '@/view/boundary/BoundaryLayer';
+import type { Relationship, Boundary } from '@/core/model/types';
 import { CollapseHandle } from '@/view/topic/CollapseHandle';
 import { TopicView } from '@/view/topic/TopicView';
 import { StickerLegend } from '@/view/canvas/StickerLegend';
@@ -19,15 +20,29 @@ import {
    type EquationDragOverlay,
 } from '@/view/topic/equationDropTarget';
 
+import {
+   mergeSelection,
+   normalizeSelectionRect,
+   topicIdsInSelectionRect,
+   type SelectionRect,
+} from '@/view/canvas/selection';
+
+const MARQUEE_MIN_DRAG = 4;
+
+const MARQUEE_BLOCKER_SELECTOR =
+   '.topic-view-wrap, .collapse-handle-wrap, .sticker-legend, .relationship-layer, .relationship-layer__path-hit, .relationship-layer__handle, .relationship-layer__label-wrap, .boundary-layer__pad-hit, .boundary-layer__handle, .boundary-layer__add-label, .boundary-layer__label--interactive';
+
 interface MindMapCanvasProps {
    sheet: Sheet;
-   selectedTopicId: TopicId | null;
+   selectedTopicIds: TopicId[];
    editTopicId?: TopicId | null;
    onEditTopicIdConsumed?: () => void;
    onEditingTopicChange?: (topicId: TopicId | null) => void;
    /** Active map theme id — included so layout (edge colors) recomputes on change. */
    themeId?: string;
-   onSelectTopic: (topicId: TopicId) => void;
+   onSelectTopic: (topicId: TopicId, options?: { additive?: boolean }) => void;
+   onSelectTopics: (topicIds: TopicId[], options?: { additive?: boolean }) => void;
+   onClearTopicSelection: () => void;
    onTopicTextChange: (topicId: TopicId, text: string) => void;
    onOpenNotesPanel: (topicId: TopicId) => void;
    onOpenLabelsPanel: (topicId: TopicId) => void;
@@ -70,16 +85,22 @@ interface MindMapCanvasProps {
    onRelationshipCursorMove?: (point: Vec2) => void;
    onSelectRelationship?: (relationshipId: string | null) => void;
    onUpdateRelationship?: (relationshipId: string, patch: Partial<Relationship>) => void;
+   selectedBoundaryId?: string | null;
+   onSelectBoundary?: (boundaryId: string | null) => void;
+   onUpdateBoundary?: (boundaryId: string, patch: Partial<Boundary>) => void;
+   onBoundarySelectTopic?: (topicId: TopicId, options?: { additive?: boolean }) => void;
 }
 
 export function MindMapCanvas({
    sheet,
-   selectedTopicId,
+   selectedTopicIds,
    editTopicId = null,
    onEditTopicIdConsumed,
    onEditingTopicChange,
    themeId = DEFAULT_MAP_THEME_ID,
    onSelectTopic,
+   onSelectTopics,
+   onClearTopicSelection,
    onTopicTextChange,
    onOpenNotesPanel,
    onOpenLabelsPanel,
@@ -117,6 +138,10 @@ export function MindMapCanvas({
    onRelationshipCursorMove,
    onSelectRelationship = () => {},
    onUpdateRelationship = () => {},
+   selectedBoundaryId = null,
+   onSelectBoundary = () => {},
+   onUpdateBoundary = () => {},
+   onBoundarySelectTopic,
 }: MindMapCanvasProps) {
    const [liveEdit, setLiveEdit] = useState<{ topicId: TopicId; text: string } | null>(null);
    const [liveEquationScale, setLiveEquationScale] = useState<{
@@ -126,7 +151,22 @@ export function MindMapCanvas({
    const [hoveredCollapseTopicId, setHoveredCollapseTopicId] = useState<TopicId | null>(null);
    const [equationDrag, setEquationDrag] = useState<EquationDragOverlay | null>(null);
    const canvasRef = useRef<HTMLDivElement>(null);
+   const layoutNodesRef = useRef(layoutSheet(sheet).nodes);
    const editingTopicRef = useRef<TopicId | null>(null);
+   const marqueeDragRef = useRef<{
+      pointerId: number;
+      start: Vec2;
+      current: Vec2;
+      active: boolean;
+      additive: boolean;
+   } | null>(null);
+   const [marqueeRect, setMarqueeRect] = useState<SelectionRect | null>(null);
+   const [marqueePreviewIds, setMarqueePreviewIds] = useState<TopicId[] | null>(null);
+   const selectedTopicIdSet = useMemo(() => new Set(selectedTopicIds), [selectedTopicIds]);
+   const highlightedTopicIdSet = useMemo(() => {
+      if (!marqueePreviewIds) return selectedTopicIdSet;
+      return new Set(marqueePreviewIds);
+   }, [marqueePreviewIds, selectedTopicIdSet]);
 
    useEffect(() => {
       if (!relationshipDraft || !onRelationshipCursorMove) return;
@@ -144,14 +184,109 @@ export function MindMapCanvas({
    }, [relationshipDraft, onRelationshipCursorMove, viewport]);
 
    const handleTopicSelect = useCallback(
-      (topicId: TopicId) => {
+      (topicId: TopicId, options?: { additive?: boolean }) => {
          if (relationshipMode) {
             onRelationshipTopicClick?.(topicId);
             return;
          }
-         onSelectTopic(topicId);
+         onSelectTopic(topicId, options);
       },
       [relationshipMode, onRelationshipTopicClick, onSelectTopic],
+   );
+
+   const isMarqueeBlockedTarget = useCallback((target: EventTarget | null) => {
+      return Boolean((target as HTMLElement | null)?.closest(MARQUEE_BLOCKER_SELECTOR));
+   }, []);
+
+   const finishMarquee = useCallback(
+      (event: PointerEvent) => {
+         const drag = marqueeDragRef.current;
+         if (!drag || drag.pointerId !== event.pointerId) return;
+
+         marqueeDragRef.current = null;
+         setMarqueeRect(null);
+         setMarqueePreviewIds(null);
+         canvasRef.current?.releasePointerCapture(event.pointerId);
+
+         if (drag.active) {
+            const rect = normalizeSelectionRect(drag.start, drag.current);
+            const hits = topicIdsInSelectionRect(layoutNodesRef.current, rect);
+            onSelectTopics(hits, { additive: drag.additive });
+            return;
+         }
+
+         if (!drag.additive) {
+            onClearTopicSelection();
+         }
+         onSelectBoundary(null);
+      },
+      [onClearTopicSelection, onSelectBoundary, onSelectTopics],
+   );
+
+   useEffect(() => {
+      const onPointerMove = (event: PointerEvent) => {
+         const drag = marqueeDragRef.current;
+         if (!drag || drag.pointerId !== event.pointerId) return;
+
+         const container = canvasRef.current?.closest('.viewport') as HTMLElement | null;
+         if (!container) return;
+
+         const current = clientToWorld(event.clientX, event.clientY, viewport, container);
+         drag.current = current;
+
+         const rect = normalizeSelectionRect(drag.start, current);
+         const moved = Math.hypot(current.x - drag.start.x, current.y - drag.start.y);
+         if (!drag.active && moved >= MARQUEE_MIN_DRAG) {
+            drag.active = true;
+         }
+         if (drag.active) {
+            setMarqueeRect(rect);
+            const hits = topicIdsInSelectionRect(layoutNodesRef.current, rect);
+            setMarqueePreviewIds(
+               drag.additive ? mergeSelection(selectedTopicIds, hits) : hits,
+            );
+         }
+      };
+
+      const onPointerUp = (event: PointerEvent) => {
+         if (!marqueeDragRef.current) return;
+         finishMarquee(event);
+      };
+
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('pointercancel', onPointerUp);
+      return () => {
+         window.removeEventListener('pointermove', onPointerMove);
+         window.removeEventListener('pointerup', onPointerUp);
+         window.removeEventListener('pointercancel', onPointerUp);
+      };
+   }, [finishMarquee, selectedTopicIds, viewport]);
+
+   const handleCanvasPointerDown = useCallback(
+      (event: React.PointerEvent<HTMLDivElement>) => {
+         if (event.button !== 0 || relationshipMode) return;
+         if (isMarqueeBlockedTarget(event.target)) return;
+
+         onSelectBoundary(null);
+
+         const container = canvasRef.current?.closest('.viewport') as HTMLElement | null;
+         if (!container) return;
+
+         const start = clientToWorld(event.clientX, event.clientY, viewport, container);
+         marqueeDragRef.current = {
+            pointerId: event.pointerId,
+            start,
+            current: start,
+            active: false,
+            additive: event.shiftKey,
+         };
+         setMarqueeRect(null);
+         setMarqueePreviewIds(null);
+         canvasRef.current?.setPointerCapture(event.pointerId);
+         event.stopPropagation();
+      },
+      [isMarqueeBlockedTarget, onSelectBoundary, relationshipMode, viewport],
    );
 
    const handleEditingChange = useCallback(
@@ -212,6 +347,7 @@ export function MindMapCanvas({
       () => layoutSheet(layoutSheetInput, liveEdit?.topicId, themeId),
       [layoutSheetInput, themeId, liveEdit?.topicId, liveEquationScale],
    );
+   layoutNodesRef.current = layout.nodes;
 
    const handleLiveEquationScaleChange = useCallback((topicId: TopicId, scale: number | null) => {
       if (scale == null) {
@@ -329,6 +465,16 @@ export function MindMapCanvas({
    };
    const rootLayout = layout.nodes.get(sheet.rootTopicId);
    const legendStickerIds = useMemo(() => collectSheetStickerIds(sheet), [sheet]);
+   const marqueeStyle =
+      marqueeRect == null
+         ? null
+         : {
+              left: marqueeRect.x - layout.bounds.x,
+              top: marqueeRect.y - layout.bounds.y,
+              width: marqueeRect.width,
+              height: marqueeRect.height,
+           };
+
    return (
       <div
          ref={canvasRef}
@@ -339,11 +485,18 @@ export function MindMapCanvas({
             width: layout.bounds.width,
             height: layout.bounds.height,
          }}
+         onPointerDown={handleCanvasPointerDown}
       >
          <EdgeLayer
             edges={layout.edges}
             bounds={layout.bounds}
             rootExclusion={rootLayout}
+         />
+         <BoundaryBackgroundLayer
+            sheet={sheet}
+            boundaries={sheet.boundaries ?? []}
+            nodes={layout.nodes}
+            bounds={layout.bounds}
          />
          <RelationshipLayer
             relationships={sheet.relationships ?? []}
@@ -355,6 +508,9 @@ export function MindMapCanvas({
             onSelectRelationship={onSelectRelationship}
             onUpdateRelationship={onUpdateRelationship}
          />
+         {marqueeStyle ? (
+            <div className="mindmap-canvas__marquee" style={marqueeStyle} />
+         ) : null}
          <div
             className="mindmap-canvas__topics"
             style={{
@@ -376,7 +532,7 @@ export function MindMapCanvas({
                   markers={sheet.topicsById[topicId]?.markers ?? []}
                   layout={nodeLayout}
                   themeId={themeId}
-                  selected={topicId === selectedTopicId}
+                  selected={highlightedTopicIdSet.has(topicId)}
                   autoFocusEdit={topicId === editTopicId}
                   onAutoFocusEditConsumed={onEditTopicIdConsumed}
                   onEditingChange={(editing) => handleEditingChange(topicId, editing)}
@@ -449,6 +605,17 @@ export function MindMapCanvas({
                ),
             )}
          </div>
+         <BoundaryInteractionLayer
+            sheet={sheet}
+            boundaries={sheet.boundaries ?? []}
+            nodes={layout.nodes}
+            bounds={layout.bounds}
+            selectedBoundaryId={selectedBoundaryId}
+            zoom={viewportZoom}
+            onSelectBoundary={onSelectBoundary}
+            onUpdateBoundary={onUpdateBoundary}
+            onSelectTopic={onBoundarySelectTopic ?? handleTopicSelect}
+         />
       </div>
    );
 }

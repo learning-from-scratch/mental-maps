@@ -88,7 +88,7 @@ interface TopicViewProps {
   autoFocusEdit?: boolean;
   onAutoFocusEditConsumed?: () => void;
   onEditingChange?: (editing: boolean) => void;
-  onSelect?: (topicId: TopicId) => void;
+  onSelect?: (topicId: TopicId, options?: { additive?: boolean }) => void;
   onTextChange?: (topicId: TopicId, text: string) => void;
   onLiveTextChange?: (topicId: TopicId, text: string | null) => void;
   onOpenNotes?: (topicId: TopicId) => void;
@@ -548,7 +548,7 @@ export function TopicView({
           event.stopPropagation();
           if (!isEditing) {
             onEquationDeselect?.();
-            onSelect?.(topicId);
+            onSelect?.(topicId, { additive: event.shiftKey });
           }
         }}
       >

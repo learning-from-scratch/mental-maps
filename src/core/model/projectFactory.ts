@@ -95,6 +95,7 @@ export function createEmptyProject(title = 'Untitled Map'): ProjectState {
   return {
     id: 'local-pending',
     title,
+    createdAt: doc.createdAt,
     sheets: [sheet.id],
     sheetsById: { [sheet.id]: sheet },
     activeSheetId: sheet.id,

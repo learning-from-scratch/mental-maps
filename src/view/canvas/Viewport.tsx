@@ -189,7 +189,7 @@ export function Viewport({
   return (
     <div
       ref={containerRef}
-      className={`viewport${isPanning ? ' viewport--panning' : ''}`}
+      className={`viewport canvas-surface${isPanning ? ' viewport--panning' : ''}`}
       data-canvas-dots={showCanvasDots ? 'yes' : 'no'}
       style={
         {

@@ -5,6 +5,7 @@ import { getSupabase } from '@/lib/supabase';
 export interface MapSummary {
   id: string;
   title: string;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -19,14 +20,15 @@ export async function listMaps(): Promise<MapSummary[]> {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from('maps')
-    .select('id, title, updated_at')
-    .order('updated_at', { ascending: false });
+    .select('id, title, created_at, updated_at')
+    .order('created_at', { ascending: true });
 
   if (error) throw error;
 
   return (data ?? []).map((row) => ({
     id: row.id,
     title: row.title,
+    createdAt: row.created_at,
     updatedAt: row.updated_at,
   }));
 }

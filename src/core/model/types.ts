@@ -70,7 +70,11 @@ export interface Boundary {
   id: string;
   parentId: TopicId;
   range: [number, number];
+  /** Selected topics that anchor this boundary's visual bounds. */
+  topicIds?: TopicId[];
   label?: string;
+  paddingTop?: number;
+  paddingBottom?: number;
   style?: { fill?: string; stroke?: string };
 }
 

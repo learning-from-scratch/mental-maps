@@ -9,7 +9,7 @@ export function ViewportNavHint({ onDismiss }: ViewportNavHintProps) {
   return (
     <div className="viewport__hud">
       <span className="viewport__hud-text">
-        Right-drag or two-finger pan · Scroll or pinch to zoom
+        Drag or two-finger swipe to pan · Scroll or pinch to zoom
       </span>
       <button
         type="button"

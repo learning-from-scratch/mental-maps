@@ -1,7 +1,5 @@
-import { Mail } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
 import { ZeonLogo } from '@/view/brand/ZeonLogo';
-import { appIcon } from '@/view/icons';
 import { useAuth } from './AuthProvider';
 
 function GoogleIcon() {
@@ -27,76 +25,19 @@ function GoogleIcon() {
   );
 }
 
-function isValidEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
 export function LoginPage() {
-  const { signIn, signUp, signInWithGoogle } = useAuth();
-  const [step, setStep] = useState<'email' | 'password'>('email');
-  const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const { signInWithGoogle } = useAuth();
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [googleSubmitting, setGoogleSubmitting] = useState(false);
-
-  const emailReady = isValidEmail(email.trim());
-  const passwordReady = password.length >= 6;
 
   const handleGoogleSignIn = async () => {
     setError(null);
-    setMessage(null);
-    setGoogleSubmitting(true);
-
-    const result = await signInWithGoogle();
-    setGoogleSubmitting(false);
-
-    if (result.error) setError(result.error);
-  };
-
-  const handleEmailContinue = (event: FormEvent) => {
-    event.preventDefault();
-    if (!emailReady) return;
-
-    setError(null);
-    setMessage(null);
-    setStep('password');
-  };
-
-  const handlePasswordSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!passwordReady) return;
-
-    setError(null);
-    setMessage(null);
     setSubmitting(true);
 
-    const result =
-      mode === 'sign-in'
-        ? await signIn(email.trim(), password)
-        : await signUp(email.trim(), password);
-
+    const result = await signInWithGoogle();
     setSubmitting(false);
 
-    if (result.error) {
-      setError(result.error);
-      return;
-    }
-
-    if (mode === 'sign-up') {
-      setMessage('Account created. Check your email if confirmation is required, then sign in.');
-      setMode('sign-in');
-      setPassword('');
-    }
-  };
-
-  const goBackToEmail = () => {
-    setStep('email');
-    setPassword('');
-    setError(null);
-    setMessage(null);
+    if (result.error) setError(result.error);
   };
 
   return (
@@ -106,95 +47,17 @@ export function LoginPage() {
           Welcome to <ZeonLogo className="auth-card__wordmark" />
         </h1>
 
-        {step === 'email' ? (
-          <>
-            <form className="auth-form" onSubmit={handleEmailContinue}>
-              <label className="auth-form__field">
-                <span className="auth-form__label">Email</span>
-                <span className="auth-form__input-wrap">
-                  <Mail {...appIcon('auth-form__input-icon')} />
-                  <input
-                    type="email"
-                    autoComplete="email"
-                    required
-                    placeholder="Enter your email"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                  />
-                </span>
-              </label>
+        <button
+          type="button"
+          className="auth-google auth-google--primary"
+          onClick={handleGoogleSignIn}
+          disabled={submitting}
+        >
+          <GoogleIcon />
+          {submitting ? 'Redirecting…' : 'Continue with Google'}
+        </button>
 
-              <button
-                className="auth-form__submit"
-                type="submit"
-                disabled={!emailReady || submitting || googleSubmitting}
-              >
-                Continue
-              </button>
-            </form>
-
-            <div className="auth-divider">
-              <span>or</span>
-            </div>
-
-            <button
-              type="button"
-              className="auth-google"
-              onClick={handleGoogleSignIn}
-              disabled={submitting || googleSubmitting}
-            >
-              <GoogleIcon />
-              {googleSubmitting ? 'Redirecting…' : 'Continue with Google'}
-            </button>
-          </>
-        ) : (
-          <form className="auth-form" onSubmit={handlePasswordSubmit}>
-            <p className="auth-card__email-hint">{email.trim()}</p>
-
-            <label className="auth-form__field">
-              <span className="auth-form__label">Password</span>
-              <input
-                type="password"
-                className="auth-form__input-standalone"
-                autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
-                required
-                minLength={6}
-                placeholder="Enter your password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </label>
-
-            {error ? <p className="auth-form__error">{error}</p> : null}
-            {message ? <p className="auth-form__message">{message}</p> : null}
-
-            <button
-              className="auth-form__submit"
-              type="submit"
-              disabled={!passwordReady || submitting}
-            >
-              {submitting ? 'Please wait…' : mode === 'sign-in' ? 'Sign in' : 'Create account'}
-            </button>
-
-            <button type="button" className="auth-card__toggle" onClick={goBackToEmail}>
-              Use a different email
-            </button>
-
-            <button
-              type="button"
-              className="auth-card__toggle"
-              onClick={() => {
-                setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in');
-                setError(null);
-                setMessage(null);
-              }}
-            >
-              {mode === 'sign-in' ? 'Need an account? Sign up' : 'Already have an account? Sign in'}
-            </button>
-          </form>
-        )}
-
-        {step === 'email' && error ? <p className="auth-form__error auth-form__error--spaced">{error}</p> : null}
+        {error ? <p className="auth-form__error auth-form__error--spaced">{error}</p> : null}
 
         <p className="auth-card__legal">
           By continuing, you agree to use Zeon for your personal mind maps.

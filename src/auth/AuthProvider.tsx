@@ -14,8 +14,6 @@ interface AuthContextValue {
   session: Session | null;
   user: User | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<{ error: string | null }>;
-  signUp: (email: string, password: string) => Promise<{ error: string | null }>;
   signInWithGoogle: () => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
@@ -42,16 +40,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.subscription.unsubscribe();
   }, []);
 
-  const signIn = useCallback(async (email: string, password: string) => {
-    const { error } = await getSupabase().auth.signInWithPassword({ email, password });
-    return { error: error?.message ?? null };
-  }, []);
-
-  const signUp = useCallback(async (email: string, password: string) => {
-    const { error } = await getSupabase().auth.signUp({ email, password });
-    return { error: error?.message ?? null };
-  }, []);
-
   const signInWithGoogle = useCallback(async () => {
     const { error } = await getSupabase().auth.signInWithOAuth({
       provider: 'google',
@@ -71,12 +59,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       user: session?.user ?? null,
       loading,
-      signIn,
-      signUp,
       signInWithGoogle,
       signOut,
     }),
-    [session, loading, signIn, signUp, signInWithGoogle, signOut],
+    [session, loading, signInWithGoogle, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
