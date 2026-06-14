@@ -77,6 +77,8 @@ interface MindMapCanvasProps {
    onDeleteEquation?: (topicId: TopicId) => void;
    onDismissTopicPanels?: () => void;
    onToggleCollapse: (topicId: TopicId) => void;
+   onInsertChild?: (topicId: TopicId, commitText: string) => void;
+   onInsertSibling?: (topicId: TopicId, commitText: string) => void;
    resolveTopicLinkLabel?: (topicId: TopicId) => string | undefined;
    relationshipDraft?: RelationshipDraft | null;
    relationshipMode?: 'pick-start' | 'pick-end' | null;
@@ -130,6 +132,8 @@ export function MindMapCanvas({
    onDeleteEquation,
    onDismissTopicPanels,
    onToggleCollapse,
+   onInsertChild,
+   onInsertSibling,
    resolveTopicLinkLabel,
    relationshipDraft = null,
    relationshipMode = null,
@@ -566,6 +570,8 @@ export function MindMapCanvas({
                   }
                   onDeleteEquation={onDeleteEquation}
                   onDismissTopicPanels={onDismissTopicPanels}
+                  onInsertChild={onInsertChild}
+                  onInsertSibling={onInsertSibling}
                   showsCollapseHandle={collapseTopicIds.has(topicId)}
                   onCollapseHandleHoverChange={(hovered) =>
                      setCollapseHandleHovered(topicId, hovered)

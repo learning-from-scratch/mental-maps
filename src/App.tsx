@@ -2145,6 +2145,8 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                   onMoveEquation={moveTopicEquation}
                   onDeleteEquation={removeTopicEquation}
                   onDismissTopicPanels={dismissTopicPanels}
+                  onInsertChild={(topicId, commitText) => insertChildTopic(topicId, commitText)}
+                  onInsertSibling={(topicId, commitText) => insertSiblingTopic(topicId, commitText)}
                   onToggleCollapse={toggleCollapse}
                   onSelectSticker={updateTopicSticker}
                   stickerLegendVisible={sheet.stickerLegend?.visible ?? false}

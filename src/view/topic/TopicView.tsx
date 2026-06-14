@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent,
 } from 'react';
 import { getTopicAttachmentIndicator } from '@/core/model/attachments';
 import {
@@ -114,6 +115,8 @@ interface TopicViewProps {
   linkLabel?: string;
   onDismissTopicPanels?: () => void;
   onSelectSticker?: (topicId: TopicId, stickerId: MarkerId) => void;
+  onInsertChild?: (topicId: TopicId, commitText: string) => void;
+  onInsertSibling?: (topicId: TopicId, commitText: string) => void;
   showsCollapseHandle?: boolean;
   onCollapseHandleHoverChange?: (hovered: boolean) => void;
 }
@@ -160,6 +163,8 @@ export function TopicView({
   onDeleteEquation,
   onDismissTopicPanels,
   onSelectSticker,
+  onInsertChild,
+  onInsertSibling,
   showsCollapseHandle = false,
   onCollapseHandleHoverChange,
 }: TopicViewProps) {
@@ -189,6 +194,47 @@ export function TopicView({
     onEditingChange?.(false);
     if (nextText !== text) onTextChange?.(topicId, nextText);
   }, [text, topicId, onTextChange, onEditingChange]);
+
+  const cancelEdit = useCallback(() => {
+    setDraftText(text);
+    isEditingRef.current = false;
+    setIsEditing(false);
+    onEditingChange?.(false);
+  }, [text, onEditingChange]);
+
+  const finishEditingForInsert = useCallback(() => {
+    isEditingRef.current = false;
+    setIsEditing(false);
+    onEditingChange?.(false);
+  }, [onEditingChange]);
+
+  const handleEditorKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      event.stopPropagation();
+
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        const commitText = draftTextRef.current.trim();
+        finishEditingForInsert();
+        onInsertChild?.(topicId, commitText);
+        return;
+      }
+
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        const commitText = draftTextRef.current.trim();
+        finishEditingForInsert();
+        onInsertSibling?.(topicId, commitText);
+        return;
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cancelEdit();
+      }
+    },
+    [topicId, finishEditingForInsert, onInsertChild, onInsertSibling, cancelEdit],
+  );
 
   useEffect(() => {
     if (!isEditing) setDraftText(text);
@@ -393,13 +439,6 @@ export function TopicView({
   ]
     .filter(Boolean)
     .join(' ');
-
-  const cancelEdit = () => {
-    setDraftText(text);
-    isEditingRef.current = false;
-    setIsEditing(false);
-    onEditingChange?.(false);
-  };
 
   const stickerCount = hasStickers ? sortTopicStickers(markers).length : 0;
   const showAttachmentForMeasure =
@@ -637,19 +676,7 @@ export function TopicView({
                 wrap={isSingleLineEdit ? 'off' : 'soft'}
                 onChange={(event) => setDraftText(event.target.value)}
                 onBlur={commitEdit}
-                onKeyDown={(event) => {
-                  event.stopPropagation();
-                  if (event.key === 'Tab') {
-                    event.preventDefault();
-                    commitEdit();
-                  } else if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault();
-                    commitEdit();
-                  } else if (event.key === 'Escape') {
-                    event.preventDefault();
-                    cancelEdit();
-                  }
-                }}
+                onKeyDown={handleEditorKeyDown}
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => event.stopPropagation()}
                 onDoubleClick={(event) => event.stopPropagation()}
@@ -666,19 +693,7 @@ export function TopicView({
             wrap={isSingleLineEdit ? 'off' : 'soft'}
             onChange={(event) => setDraftText(event.target.value)}
             onBlur={commitEdit}
-            onKeyDown={(event) => {
-              event.stopPropagation();
-              if (event.key === 'Tab') {
-                event.preventDefault();
-                commitEdit();
-              } else if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                commitEdit();
-              } else if (event.key === 'Escape') {
-                event.preventDefault();
-                cancelEdit();
-              }
-            }}
+            onKeyDown={handleEditorKeyDown}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
