@@ -47,6 +47,12 @@ import { MindMapCanvas } from '@/view/canvas/MindMapCanvas';
 import { mergeSelection, toggleTopicInSelection } from '@/view/canvas/selection';
 import type { RelationshipDraft } from '@/view/relationship/RelationshipLayer';
 import { Viewport, type ViewportState } from '@/view/canvas/Viewport';
+import {
+   centeredViewportForSheet,
+   centeredViewportsForProject,
+   computeViewportCenteredOnRoot,
+   makeSheetViewportKey,
+} from '@/view/canvas/viewportCenter';
 import { isExternalLinkConfirmSkipped } from '@/prefs/externalLinkConfirm';
 import {
    InsertWebLinkModal,
@@ -247,11 +253,26 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    const notesCommitRef = useRef<(() => void) | null>(null);
    const labelCommitRef = useRef<(() => void) | null>(null);
    const equationCommitRef = useRef<(() => void) | null>(null);
-   const [viewport, setViewport] = useState<ViewportState>(() => ({
-      x: window.innerWidth / 2 - 64,
-      y: window.innerHeight / 2,
-      zoom: 1,
-   }));
+   const [viewportBySheetKey, setViewportBySheetKey] = useState<Record<string, ViewportState>>({});
+   const pendingCenterKeysRef = useRef(new Set<string>());
+
+   const resetProjectViewports = useCallback((project: ProjectState) => {
+      const viewports = centeredViewportsForProject(project);
+      pendingCenterKeysRef.current = new Set(Object.keys(viewports));
+      setViewportBySheetKey((current) => ({
+         ...current,
+         ...viewports,
+      }));
+   }, []);
+
+   const centerSheetViewport = useCallback((projectId: string, targetSheet: Sheet) => {
+      const viewports = centeredViewportForSheet(projectId, targetSheet);
+      pendingCenterKeysRef.current = new Set(Object.keys(viewports));
+      setViewportBySheetKey((current) => ({
+         ...current,
+         ...viewports,
+      }));
+   }, []);
    const [pendingNavHintSheetIds, setPendingNavHintSheetIds] = useState<Set<SheetId>>(
       () => new Set(),
    );
@@ -293,6 +314,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                setProjects([project]);
                setActiveProjectId(id);
                setSelectedTopicIds([]);
+               resetProjectViewports(project);
                queueNavHintForSheet(project.activeSheetId);
                return;
             }
@@ -312,6 +334,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             setProjects(loaded);
             setActiveProjectId(first.id);
             setSelectedTopicIds([]);
+            resetProjectViewports(first);
          } catch (error) {
             if (!cancelled) {
                setCloudError(error instanceof Error ? error.message : 'Failed to load maps');
@@ -324,7 +347,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       return () => {
          cancelled = true;
       };
-   }, [isCloud, queueNavHintForSheet]);
+   }, [isCloud, queueNavHintForSheet, resetProjectViewports]);
 
    useEffect(() => {
       if (urlNavigationHandled.current || cloudLoading || projects.length === 0) return;
@@ -393,6 +416,61 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    );
    const mapThemeId = sheet ? resolveSheetThemeId(sheet.theme) : DEFAULT_MAP_THEME_ID;
    const canvasDotsEnabled = sheet?.canvasDotsEnabled ?? true;
+
+   const viewportKey =
+      activeProject && activeSheetId
+         ? makeSheetViewportKey(activeProject.id, activeSheetId)
+         : null;
+
+   const viewport = useMemo(() => {
+      if (viewportKey && viewportBySheetKey[viewportKey]) {
+         return viewportBySheetKey[viewportKey];
+      }
+      if (sheet) {
+         return computeViewportCenteredOnRoot(sheet, mapThemeId);
+      }
+      return {
+         x: window.innerWidth / 2,
+         y: window.innerHeight / 2,
+         zoom: 1,
+      };
+   }, [viewportKey, viewportBySheetKey, sheet, mapThemeId]);
+
+   const updateViewport = useCallback(
+      (next: ViewportState | ((prev: ViewportState) => ViewportState)) => {
+         if (!viewportKey || !sheet) return;
+
+         setViewportBySheetKey((current) => {
+            const previous =
+               current[viewportKey] ?? computeViewportCenteredOnRoot(sheet, mapThemeId);
+            const resolved = typeof next === 'function' ? next(previous) : next;
+            return { ...current, [viewportKey]: resolved };
+         });
+      },
+      [viewportKey, sheet, mapThemeId],
+   );
+
+   const localViewportInitializedRef = useRef(false);
+   useEffect(() => {
+      if (isCloud || cloudLoading || localViewportInitializedRef.current || !activeProject) return;
+
+      resetProjectViewports(activeProject);
+      localViewportInitializedRef.current = true;
+   }, [isCloud, cloudLoading, activeProject, resetProjectViewports]);
+
+   useEffect(() => {
+      if (!viewportKey || !sheet || !pendingCenterKeysRef.current.has(viewportKey)) return;
+
+      pendingCenterKeysRef.current.delete(viewportKey);
+      const frame = requestAnimationFrame(() => {
+         setViewportBySheetKey((current) => ({
+            ...current,
+            [viewportKey]: computeViewportCenteredOnRoot(sheet, mapThemeId),
+         }));
+      });
+
+      return () => cancelAnimationFrame(frame);
+   }, [viewportKey, sheet, mapThemeId]);
 
    const canvasStyle = useMemo(() => getMapCanvasStyle(mapThemeId), [mapThemeId]);
 
@@ -509,7 +587,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       const centerX = width / 2;
       const centerY = height / 2;
 
-      setViewport((prev) => {
+      updateViewport((prev) => {
          const nextZoom = Math.min(2.5, Math.max(0.25, zoom));
          const scale = nextZoom / prev.zoom;
          return {
@@ -518,7 +596,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             y: centerY - scale * (centerY - prev.y),
          };
       });
-   }, []);
+   }, [updateViewport]);
 
    const toggleCollapse = (topicId: TopicId) => {
       updateActiveSheet((draft) => {
@@ -1083,6 +1161,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             setActiveProjectId(id);
             setSelectedTopicIds([]);
             setShowHome(false);
+            resetProjectViewports(project);
             queueNavHintForSheet(project.activeSheetId);
          } catch (error) {
             setCloudError(error instanceof Error ? error.message : 'Failed to create project');
@@ -1096,36 +1175,42 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       setActiveProjectId(projectId);
       setSelectedTopicIds([]);
       setShowHome(false);
+      resetProjectViewports(project);
       queueNavHintForSheet(project.activeSheetId);
-   }, [isCloud, queueNavHintForSheet]);
+   }, [isCloud, queueNavHintForSheet, resetProjectViewports]);
 
    const addBlankSheet = useCallback(() => {
       if (!activeProjectId) return;
 
       let newRootTopicId: TopicId | null = null;
       let newSheetId: SheetId | null = null;
+      let newSheet: Sheet | null = null;
 
       setProjects((current) =>
          current.map((project) => {
             if (project.id !== activeProjectId) return project;
 
             const nextIndex = project.sheets.length + 1;
-            const newSheet = createSheet({ title: `Map ${nextIndex}` });
-            newRootTopicId = newSheet.rootTopicId;
-            newSheetId = newSheet.id;
+            const createdSheet = createSheet({ title: `Map ${nextIndex}` });
+            newRootTopicId = createdSheet.rootTopicId;
+            newSheetId = createdSheet.id;
+            newSheet = createdSheet;
 
             return {
                ...project,
-               sheets: [...project.sheets, newSheet.id],
-               sheetsById: { ...project.sheetsById, [newSheet.id]: newSheet },
-               activeSheetId: newSheet.id,
+               sheets: [...project.sheets, createdSheet.id],
+               sheetsById: { ...project.sheetsById, [createdSheet.id]: createdSheet },
+               activeSheetId: createdSheet.id,
             };
          }),
       );
 
+      if (newSheet) {
+         centerSheetViewport(activeProjectId, newSheet);
+      }
       if (newRootTopicId) setSelectedTopicIds([newRootTopicId]);
       if (newSheetId) queueNavHintForSheet(newSheetId);
-   }, [activeProjectId, queueNavHintForSheet]);
+   }, [activeProjectId, queueNavHintForSheet, centerSheetViewport]);
 
    const openHome = useCallback(() => {
       dismissTopicPanels();
@@ -1134,12 +1219,16 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
    const selectProject = useCallback(
       (projectId: string) => {
+         const project = projects.find((entry) => entry.id === projectId);
+         if (!project) return;
+
+         resetProjectViewports(project);
          setActiveProjectId(projectId);
          setSelectedTopicIds([]);
          setShowHome(false);
          dismissTopicPanels();
       },
-      [dismissTopicPanels],
+      [projects, resetProjectViewports, dismissTopicPanels],
    );
 
    const startRelationshipMode = useCallback(() => {
@@ -1673,13 +1762,13 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
          const worldX = node.x + node.width / 2;
          const worldY = node.y + node.height / 2;
 
-         setViewport((prev) => ({
+         updateViewport((prev) => ({
             zoom: prev.zoom,
             x: width / 2 - prev.zoom * worldX,
             y: height / 2 - prev.zoom * worldY,
          }));
       },
-      [],
+      [updateViewport],
    );
 
    const followTopicLink = useCallback(
@@ -1847,6 +1936,9 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                : project,
          ),
       );
+      if (activeProjectId) {
+         centerSheetViewport(activeProjectId, copy);
+      }
       setSelectedTopicIds([]);
       queueNavHintForSheet(copy.id);
    };
@@ -2057,7 +2149,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                canvasStyle={canvasStyle}
                showCanvasDots={canvasDotsEnabled}
                viewport={viewport}
-               onViewportChange={setViewport}
+               onViewportChange={updateViewport}
                showNavHint={showNavHint}
                onDismissNavHint={dismissNavHint}
                onClearSelection={() => {

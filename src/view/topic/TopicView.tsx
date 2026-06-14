@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent,
 } from 'react';
 import { getTopicAttachmentIndicator } from '@/core/model/attachments';
 import {
@@ -209,7 +208,7 @@ export function TopicView({
   }, [onEditingChange]);
 
   const handleEditorKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    (event: globalThis.KeyboardEvent) => {
       event.stopPropagation();
 
       if (event.key === 'Tab') {
@@ -676,7 +675,7 @@ export function TopicView({
                 wrap={isSingleLineEdit ? 'off' : 'soft'}
                 onChange={(event) => setDraftText(event.target.value)}
                 onBlur={commitEdit}
-                onKeyDown={handleEditorKeyDown}
+                onKeyDown={(event) => handleEditorKeyDown(event.nativeEvent)}
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => event.stopPropagation()}
                 onDoubleClick={(event) => event.stopPropagation()}
@@ -693,7 +692,7 @@ export function TopicView({
             wrap={isSingleLineEdit ? 'off' : 'soft'}
             onChange={(event) => setDraftText(event.target.value)}
             onBlur={commitEdit}
-            onKeyDown={handleEditorKeyDown}
+            onKeyDown={(event) => handleEditorKeyDown(event.nativeEvent)}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
