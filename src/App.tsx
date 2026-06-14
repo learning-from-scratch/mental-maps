@@ -41,6 +41,8 @@ import {
    wasLegacyNavHintGloballyDismissed,
 } from '@/prefs/viewportNavHint';
 import { createMap, deleteMap, listMaps, loadMap, saveMap } from '@/persistence/maps';
+import { insertOutlineInDraft } from '@/core/outline/insertOutline';
+import { parseOutline } from '@/core/outline/parseOutline';
 import { MindMapCanvas } from '@/view/canvas/MindMapCanvas';
 import { mergeSelection, toggleTopicInSelection } from '@/view/canvas/selection';
 import type { RelationshipDraft } from '@/view/relationship/RelationshipLayer';
@@ -822,6 +824,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
          applyTopicPanelDismissals(topicId);
          setEquationSelectedTopicId(null);
          setSelectedBoundaryId(null);
+         setEditingTopicId(null);
          setSelectedTopicIds((current) =>
             options?.additive ? toggleTopicInSelection(current, topicId) : [topicId],
          );
@@ -847,11 +850,12 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
    const clearTopicSelection = useCallback(() => {
       setSelectedTopicIds([]);
+      setEditingTopicId(null);
    }, []);
 
    const insertTopicAndActivate = useCallback(
       (
-         recipe: (draft: Sheet, topicId: TopicId) => void,
+         recipe: (draft: Sheet, topicId: TopicId) => TopicId | null,
          sourceTopicId: TopicId,
          options?: { commitText?: string },
       ) => {
@@ -875,10 +879,13 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                            if (sourceTopic) sourceTopic.text = options.commitText;
                         }
                         ensureSheetArrays(draft);
-                        recipe(draft, sourceTopicId);
+                        insertedTopicId = recipe(draft, sourceTopicId);
                      },
                   );
-                  insertedTopicId = findInsertedTopicId(activeSheet, nextSheet);
+
+                  if (!insertedTopicId) {
+                     insertedTopicId = findInsertedTopicId(activeSheet, nextSheet);
+                  }
 
                   if (patches.length > 0) {
                      recordSheetChange(
@@ -898,13 +905,15 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                   };
                }),
             );
-
-            if (insertedTopicId) {
-               setSelectedTopicIds([insertedTopicId]);
-               setEditTopicId(insertedTopicId);
-               setEditingTopicId(insertedTopicId);
-            }
          });
+
+         if (insertedTopicId) {
+            setSelectedRelationshipId(null);
+            setSelectedBoundaryId(null);
+            setEditingTopicId(null);
+            setSelectedTopicIds([insertedTopicId]);
+            setEditTopicId(insertedTopicId);
+         }
 
          return insertedTopicId;
       },
@@ -914,9 +923,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    const insertChildTopic = useCallback(
       (topicId: TopicId, commitText?: string) => {
          insertTopicAndActivate(
-            (draft, parentId) => {
-               insertChildInDraft(draft, parentId, mapThemeId);
-            },
+            (draft, parentId) => insertChildInDraft(draft, parentId, mapThemeId),
             topicId,
             commitText !== undefined ? { commitText } : undefined,
          );
@@ -927,14 +934,75 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    const insertSiblingTopic = useCallback(
       (topicId: TopicId, commitText?: string) => {
          insertTopicAndActivate(
-            (draft, siblingId) => {
-               insertSiblingInDraft(draft, siblingId, mapThemeId);
-            },
+            (draft, siblingId) => insertSiblingInDraft(draft, siblingId, mapThemeId),
             topicId,
             commitText !== undefined ? { commitText } : undefined,
          );
       },
       [mapThemeId, insertTopicAndActivate],
+   );
+
+   const pasteOutlineOntoTopic = useCallback(
+      (anchorTopicId: TopicId, clipboardText: string) => {
+         const outline = parseOutline(clipboardText);
+         if (!outline || outline.length === 0) return false;
+
+         let firstInsertedId: TopicId | null = null;
+
+         flushSync(() => {
+            dismissTopicPanels();
+            setEquationSelectedTopicId(null);
+            setProjects((current) =>
+               current.map((project) => {
+                  if (project.id !== activeProjectIdRef.current) return project;
+
+                  const activeSheet = project.sheetsById[project.activeSheetId];
+                  if (!activeSheet) return project;
+
+                  const [nextSheet, patches, inversePatches] = produceWithPatches(
+                     activeSheet,
+                     (draft) => {
+                        ensureSheetArrays(draft);
+                        firstInsertedId = insertOutlineInDraft(
+                           draft,
+                           anchorTopicId,
+                           outline,
+                           mapThemeId,
+                        );
+                     },
+                  );
+
+                  if (patches.length > 0) {
+                     recordSheetChange(
+                        project.id,
+                        project.activeSheetId,
+                        patches,
+                        inversePatches,
+                     );
+                  }
+
+                  return {
+                     ...project,
+                     sheetsById: {
+                        ...project.sheetsById,
+                        [project.activeSheetId]: nextSheet,
+                     },
+                  };
+               }),
+            );
+         });
+
+         if (firstInsertedId) {
+            setSelectedRelationshipId(null);
+            setSelectedBoundaryId(null);
+            setEditingTopicId(null);
+            setEditTopicId(null);
+            setSelectedTopicIds([firstInsertedId]);
+         }
+
+         return Boolean(firstInsertedId);
+      },
+      [dismissTopicPanels, mapThemeId, recordSheetChange],
    );
 
    const cancelRelationshipMode = useCallback(() => {
@@ -1442,6 +1510,32 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       recordSheetChange,
       recordSheetsByIdChange,
    ]);
+
+   useEffect(() => {
+      const handlePaste = (event: ClipboardEvent) => {
+         if (!sheet || !primarySelectedTopicId || editingTopicId) return;
+
+         const target = event.target;
+         if (
+            target instanceof HTMLInputElement ||
+            target instanceof HTMLTextAreaElement ||
+            target instanceof HTMLSelectElement ||
+            (target instanceof HTMLElement && target.isContentEditable)
+         ) {
+            return;
+         }
+
+         const clipboardText = event.clipboardData?.getData('text/plain');
+         if (!clipboardText?.trim()) return;
+
+         if (pasteOutlineOntoTopic(primarySelectedTopicId, clipboardText)) {
+            event.preventDefault();
+         }
+      };
+
+      window.addEventListener('paste', handlePaste);
+      return () => window.removeEventListener('paste', handlePaste);
+   }, [sheet, primarySelectedTopicId, editingTopicId, pasteOutlineOntoTopic]);
 
    const openNotesPanel = () => {
       if (!primarySelectedTopicId) return;
