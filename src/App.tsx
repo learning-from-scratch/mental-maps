@@ -1004,7 +1004,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       dismissTopicPanels,
    ]);
 
-   const createBlankMap = useCallback(async () => {
+   const createBlankProject = useCallback(async () => {
       const empty = createEmptyProject();
 
       if (isCloud) {
@@ -1017,7 +1017,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             setShowHome(false);
             queueNavHintForSheet(project.activeSheetId);
          } catch (error) {
-            setCloudError(error instanceof Error ? error.message : 'Failed to create map');
+            setCloudError(error instanceof Error ? error.message : 'Failed to create project');
          }
          return;
       }
@@ -1030,6 +1030,34 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       setShowHome(false);
       queueNavHintForSheet(project.activeSheetId);
    }, [isCloud, queueNavHintForSheet]);
+
+   const addBlankSheet = useCallback(() => {
+      if (!activeProjectId) return;
+
+      let newRootTopicId: TopicId | null = null;
+      let newSheetId: SheetId | null = null;
+
+      setProjects((current) =>
+         current.map((project) => {
+            if (project.id !== activeProjectId) return project;
+
+            const nextIndex = project.sheets.length + 1;
+            const newSheet = createSheet({ title: `Map ${nextIndex}` });
+            newRootTopicId = newSheet.rootTopicId;
+            newSheetId = newSheet.id;
+
+            return {
+               ...project,
+               sheets: [...project.sheets, newSheet.id],
+               sheetsById: { ...project.sheetsById, [newSheet.id]: newSheet },
+               activeSheetId: newSheet.id,
+            };
+         }),
+      );
+
+      if (newRootTopicId) setSelectedTopicIds([newRootTopicId]);
+      if (newSheetId) queueNavHintForSheet(newSheetId);
+   }, [activeProjectId, queueNavHintForSheet]);
 
    const openHome = useCallback(() => {
       dismissTopicPanels();
@@ -1205,7 +1233,11 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
          if (key === 'n') {
             event.preventDefault();
-            createBlankMap();
+            if (showHome) {
+               void createBlankProject();
+            } else {
+               addBlankSheet();
+            }
             return;
          }
 
@@ -1217,7 +1249,17 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-   }, [activeProjectId, canUndo, canRedo, handleUndo, handleRedo, createBlankMap, openHome]);
+   }, [
+      activeProjectId,
+      canUndo,
+      canRedo,
+      handleUndo,
+      handleRedo,
+      showHome,
+      createBlankProject,
+      addBlankSheet,
+      openHome,
+   ]);
 
    useEffect(() => {
       const handleKeyDown = (event: KeyboardEvent) => {
@@ -1766,25 +1808,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       );
    };
 
-   const addSheet = () => {
-      const nextIndex = activeProject.sheets.length + 1;
-      const newSheet = createSheet({ title: `Map ${nextIndex}` });
-
-      setProjects((current) =>
-         current.map((project) =>
-            project.id === activeProjectId
-               ? {
-                  ...project,
-                  sheets: [...project.sheets, newSheet.id],
-                  sheetsById: { ...project.sheetsById, [newSheet.id]: newSheet },
-                  activeSheetId: newSheet.id,
-               }
-               : project,
-         ),
-      );
-      setSelectedTopicIds([newSheet.rootTopicId]);
-      queueNavHintForSheet(newSheet.id);
-   };
+   const addSheet = addBlankSheet;
 
    const renameProject = useCallback(
       (title: string) => {
@@ -1914,7 +1938,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                canRedo={canRedo(activeProjectId)}
                onUndo={handleUndo}
                onRedo={handleRedo}
-               onNewBlankMap={createBlankMap}
+               onNewBlankMap={addBlankSheet}
                onOpenHome={openHome}
                onSignOut={onSignOut}
                onInsertSibling={() => {
@@ -2112,7 +2136,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                showCloudIcon={isCloud}
                onClose={() => setShowHome(false)}
                onSelectProject={selectProject}
-               onNewBlankMap={createBlankMap}
+               onNewBlankMap={createBlankProject}
                onRenameProject={renameProjectById}
                onRemoveProject={removeProject}
             />
