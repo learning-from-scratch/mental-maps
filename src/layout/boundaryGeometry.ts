@@ -31,10 +31,8 @@ export function collectBoundaryTopicIds(sheet: Sheet, boundary: Boundary): Topic
     const result: TopicId[] = [];
 
     for (const topicId of boundary.topicIds) {
-      result.push(topicId);
-      if (topicId !== sheet.rootTopicId) {
-        result.push(...collectDescendantIds(sheet, topicId));
-      }
+      if (topicId === sheet.rootTopicId) continue;
+      result.push(topicId, ...collectDescendantIds(sheet, topicId));
     }
 
     return result;

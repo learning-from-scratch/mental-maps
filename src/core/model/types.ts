@@ -83,6 +83,10 @@ export interface Summary {
   parentId: TopicId;
   range: [number, number];
   summaryTopicId: TopicId;
+  /** Selected topics that anchor this summary's visual bounds. */
+  topicIds?: TopicId[];
+  paddingTop?: number;
+  paddingBottom?: number;
 }
 
 export type ThemeRef = string;

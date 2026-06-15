@@ -6,8 +6,9 @@ export const MIN_BOUNDARY_PADDING = 4;
 export const DEFAULT_BOUNDARY_LABEL = 'This is a label';
 
 export function filterSelectionRoots(sheet: Sheet, selectedTopicIds: TopicId[]): TopicId[] {
-  return selectedTopicIds.filter(
-    (id) => !selectedTopicIds.some((otherId) => otherId !== id && isDescendant(sheet, otherId, id)),
+  const candidates = selectedTopicIds.filter((id) => id !== sheet.rootTopicId);
+  return candidates.filter(
+    (id) => !candidates.some((otherId) => otherId !== id && isDescendant(sheet, otherId, id)),
   );
 }
 
@@ -57,18 +58,6 @@ export function boundariesFromSelection(
   const byParent = new Map<TopicId, { index: number; topicId: TopicId }[]>();
 
   for (const topicId of roots) {
-    if (topicId === sheet.rootTopicId) {
-      return [
-        {
-          parentId: sheet.rootTopicId,
-          range: [0, 0],
-          topicIds: [sheet.rootTopicId],
-          paddingTop: DEFAULT_BOUNDARY_PADDING,
-          paddingBottom: DEFAULT_BOUNDARY_PADDING,
-        },
-      ];
-    }
-
     const placement = indexInParent(sheet, topicId);
     if (!placement) continue;
 

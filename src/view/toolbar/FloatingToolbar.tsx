@@ -16,6 +16,7 @@ interface FloatingToolbarProps {
    onAddRelationship: () => void;
    relationshipModeActive?: boolean;
    onAddBoundary?: () => void;
+   onAddSummary?: () => void;
    onAddContent: () => void;
    onAddLabel: () => void;
    onAddWebpage: () => void;
@@ -365,6 +366,7 @@ export function FloatingToolbar({
    onAddRelationship,
    relationshipModeActive = false,
    onAddBoundary,
+   onAddSummary,
    onAddContent,
    onAddLabel,
    onAddWebpage,
@@ -386,7 +388,6 @@ export function FloatingToolbar({
    const [hoveredId, setHoveredId] = useState<string | null>(null);
 
    const hasSelection = hasTopicSelection ?? selectedTopicId !== null;
-   const canUseSummary = false;
 
    const buttons: ToolbarButton[] = [
       {
@@ -420,8 +421,10 @@ export function FloatingToolbar({
          id: 'summary',
          icon: <MindMapIcons.Summary className="toolbar__icon" />,
          title: 'Summary',
+         shortcut: 'Ctrl Shift S',
          description: 'Add a summary to the selected topics',
-         disabled: !hasSelection || !canUseSummary,
+         disabled: !hasSelection,
+         onClick: onAddSummary,
       },
       {
          id: 'boundary',

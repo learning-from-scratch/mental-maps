@@ -47,6 +47,21 @@ describe('selection', () => {
     expect(hits.sort()).toEqual(['a', 'c']);
   });
 
+  it('excludes listed topics from marquee hits', () => {
+    const nodes = new Map([
+      ['root', node(0, 0, 40, 40)],
+      ['child', node(10, 10, 20, 20)],
+    ]);
+
+    const hits = topicIdsInSelectionRect(
+      nodes,
+      normalizeSelectionRect({ x: 0, y: 0 }, { x: 50, y: 50 }),
+      ['root'],
+    );
+
+    expect(hits).toEqual(['child']);
+  });
+
   it('toggles and merges topic selections', () => {
     expect(toggleTopicInSelection(['a'], 'b')).toEqual(['a', 'b']);
     expect(toggleTopicInSelection(['a', 'b'], 'a')).toEqual(['b']);

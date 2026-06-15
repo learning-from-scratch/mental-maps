@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Sheet, TopicId, MarkerId, Vec2 } from '@/core/model/types';
 import type { TopicLinkKind } from '@/core/model/link';
 import { collectSheetStickerIds } from '@/core/model/stickers';
@@ -9,12 +10,14 @@ import { DEFAULT_MAP_THEME_ID } from '@/layout/theme';
 import { EdgeLayer } from '@/view/edge/EdgeLayer';
 import { RelationshipLayer, type RelationshipDraft } from '@/view/relationship/RelationshipLayer';
 import { BoundaryBackgroundLayer, BoundaryInteractionLayer } from '@/view/boundary/BoundaryLayer';
-import type { Relationship, Boundary } from '@/core/model/types';
+import { SummaryBackgroundLayer, SummaryInteractionLayer } from '@/view/summary/SummaryLayer';
+import type { Relationship, Boundary, Summary } from '@/core/model/types';
 import { CollapseHandle } from '@/view/topic/CollapseHandle';
 import { TopicView } from '@/view/topic/TopicView';
 import { StickerLegend } from '@/view/canvas/StickerLegend';
-import { clientToWorld } from '@/view/canvas/coords';
+import { clientToViewport, clientToWorld } from '@/view/canvas/coords';
 import type { ViewportState } from '@/view/canvas/Viewport';
+import { isViewportInteractiveTarget } from '@/view/canvas/Viewport';
 import {
    findEquationDropTarget,
    type EquationDragOverlay,
@@ -30,7 +33,15 @@ import {
 const MARQUEE_MIN_DRAG = 4;
 
 const MARQUEE_BLOCKER_SELECTOR =
-   '.topic-view-wrap, .collapse-handle-wrap, .sticker-legend, .relationship-layer, .relationship-layer__path-hit, .relationship-layer__handle, .relationship-layer__label-wrap, .boundary-layer__pad-hit, .boundary-layer__handle, .boundary-layer__add-label, .boundary-layer__label--interactive';
+   '.topic-view-wrap, .collapse-handle-wrap, .sticker-legend, .relationship-layer, .relationship-layer__path-hit, .relationship-layer__handle, .relationship-layer__label-wrap, .boundary-layer__pad-hit, .boundary-layer__handle, .boundary-layer__add-label, .boundary-layer__label--interactive, .summary-layer__pad-hit, .summary-layer__handle, .summary-layer__box, .summary-layer__box-hit, .summary-layer__box-text, .summary-layer__hover-zone';
+
+/** Clicks on these keep the summary selected (group pad/outline does not). */
+const SUMMARY_KEEP_SELECTION_SELECTOR =
+   '.summary-layer__box, .summary-layer__box-hit, .summary-layer__box-text, .summary-layer__editor, .summary-layer__handle';
+
+/** Clicks on these keep the boundary selected (group pad does not). */
+const BOUNDARY_KEEP_SELECTION_SELECTOR =
+   '.boundary-layer__handle, .boundary-layer__add-label, .boundary-layer__label, .boundary-layer__label--interactive';
 
 interface MindMapCanvasProps {
    sheet: Sheet;
@@ -91,6 +102,11 @@ interface MindMapCanvasProps {
    onSelectBoundary?: (boundaryId: string | null) => void;
    onUpdateBoundary?: (boundaryId: string, patch: Partial<Boundary>) => void;
    onBoundarySelectTopic?: (topicId: TopicId, options?: { additive?: boolean }) => void;
+   selectedSummaryId?: string | null;
+   onSelectSummary?: (summaryId: string | null) => void;
+   onUpdateSummary?: (summaryId: string, patch: Partial<Summary>) => void;
+   onUpdateSummaryText?: (summaryId: string, text: string) => void;
+   onSummarySelectTopic?: (topicId: TopicId, options?: { additive?: boolean }) => void;
 }
 
 export function MindMapCanvas({
@@ -146,6 +162,11 @@ export function MindMapCanvas({
    onSelectBoundary = () => {},
    onUpdateBoundary = () => {},
    onBoundarySelectTopic,
+   selectedSummaryId = null,
+   onSelectSummary = () => {},
+   onUpdateSummary = () => {},
+   onUpdateSummaryText = () => {},
+   onSummarySelectTopic,
 }: MindMapCanvasProps) {
    const [liveEdit, setLiveEdit] = useState<{ topicId: TopicId; text: string } | null>(null);
    const [liveEquationScale, setLiveEquationScale] = useState<{
@@ -156,15 +177,20 @@ export function MindMapCanvas({
    const [equationDrag, setEquationDrag] = useState<EquationDragOverlay | null>(null);
    const canvasRef = useRef<HTMLDivElement>(null);
    const layoutNodesRef = useRef(layoutSheet(sheet).nodes);
+   const viewportRef = useRef(viewport);
+   viewportRef.current = viewport;
    const editingTopicRef = useRef<TopicId | null>(null);
    const marqueeDragRef = useRef<{
       pointerId: number;
       start: Vec2;
       current: Vec2;
+      startScreen: Vec2;
+      currentScreen: Vec2;
       active: boolean;
       additive: boolean;
+      viewportEl: HTMLElement;
    } | null>(null);
-   const [marqueeRect, setMarqueeRect] = useState<SelectionRect | null>(null);
+   const [marqueeScreenRect, setMarqueeScreenRect] = useState<SelectionRect | null>(null);
    const [marqueePreviewIds, setMarqueePreviewIds] = useState<TopicId[] | null>(null);
    const selectedTopicIdSet = useMemo(() => new Set(selectedTopicIds), [selectedTopicIds]);
    const highlightedTopicIdSet = useMemo(() => {
@@ -208,13 +234,17 @@ export function MindMapCanvas({
          if (!drag || drag.pointerId !== event.pointerId) return;
 
          marqueeDragRef.current = null;
-         setMarqueeRect(null);
+         setMarqueeScreenRect(null);
          setMarqueePreviewIds(null);
-         canvasRef.current?.releasePointerCapture(event.pointerId);
+         if (drag.viewportEl.hasPointerCapture(event.pointerId)) {
+            drag.viewportEl.releasePointerCapture(event.pointerId);
+         }
 
          if (drag.active) {
             const rect = normalizeSelectionRect(drag.start, drag.current);
-            const hits = topicIdsInSelectionRect(layoutNodesRef.current, rect);
+            const hits = topicIdsInSelectionRect(layoutNodesRef.current, rect, [
+               sheet.rootTopicId,
+            ]);
             onSelectTopics(hits, { additive: drag.additive });
             return;
          }
@@ -223,8 +253,9 @@ export function MindMapCanvas({
             onClearTopicSelection();
          }
          onSelectBoundary(null);
+         onSelectSummary(null);
       },
-      [onClearTopicSelection, onSelectBoundary, onSelectTopics],
+      [onClearTopicSelection, onSelectBoundary, onSelectSummary, onSelectTopics],
    );
 
    useEffect(() => {
@@ -232,20 +263,26 @@ export function MindMapCanvas({
          const drag = marqueeDragRef.current;
          if (!drag || drag.pointerId !== event.pointerId) return;
 
-         const container = canvasRef.current?.closest('.viewport') as HTMLElement | null;
-         if (!container) return;
-
-         const current = clientToWorld(event.clientX, event.clientY, viewport, container);
+         const current = clientToWorld(
+            event.clientX,
+            event.clientY,
+            viewportRef.current,
+            drag.viewportEl,
+         );
+         const currentScreen = clientToViewport(event.clientX, event.clientY, drag.viewportEl);
          drag.current = current;
+         drag.currentScreen = currentScreen;
 
-         const rect = normalizeSelectionRect(drag.start, current);
+         const worldRect = normalizeSelectionRect(drag.start, current);
          const moved = Math.hypot(current.x - drag.start.x, current.y - drag.start.y);
          if (!drag.active && moved >= MARQUEE_MIN_DRAG) {
             drag.active = true;
          }
          if (drag.active) {
-            setMarqueeRect(rect);
-            const hits = topicIdsInSelectionRect(layoutNodesRef.current, rect);
+            setMarqueeScreenRect(normalizeSelectionRect(drag.startScreen, currentScreen));
+            const hits = topicIdsInSelectionRect(layoutNodesRef.current, worldRect, [
+               sheet.rootTopicId,
+            ]);
             setMarqueePreviewIds(
                drag.additive ? mergeSelection(selectedTopicIds, hits) : hits,
             );
@@ -265,33 +302,76 @@ export function MindMapCanvas({
          window.removeEventListener('pointerup', onPointerUp);
          window.removeEventListener('pointercancel', onPointerUp);
       };
-   }, [finishMarquee, selectedTopicIds, viewport]);
+   }, [finishMarquee, selectedTopicIds]);
 
-   const handleCanvasPointerDown = useCallback(
-      (event: React.PointerEvent<HTMLDivElement>) => {
+   useEffect(() => {
+      const onPointerDown = (event: PointerEvent) => {
          if (event.button !== 0 || relationshipMode) return;
-         if (isMarqueeBlockedTarget(event.target)) return;
+         if (!(event.target instanceof Element)) return;
+         const target = event.target;
 
-         onSelectBoundary(null);
+         if (!target.closest(SUMMARY_KEEP_SELECTION_SELECTOR)) {
+            const summaryEditorActive = document.querySelector(
+               '.summary-layer__editor',
+            );
+            if (!summaryEditorActive) {
+               onSelectSummary(null);
+            }
+         }
+         if (!target.closest(BOUNDARY_KEEP_SELECTION_SELECTOR)) {
+            onSelectBoundary(null);
+         }
 
-         const container = canvasRef.current?.closest('.viewport') as HTMLElement | null;
-         if (!container) return;
+         const viewportEl = target.closest('.viewport');
+         if (!(viewportEl instanceof HTMLElement)) return;
 
-         const start = clientToWorld(event.clientX, event.clientY, viewport, container);
+         const canMarquee =
+            !isMarqueeBlockedTarget(event.target) &&
+            !isViewportInteractiveTarget(event.target);
+
+         if (!canMarquee) {
+            if (
+               !event.shiftKey &&
+               !target.closest('.topic-view-wrap') &&
+               !isViewportInteractiveTarget(event.target)
+            ) {
+               onClearTopicSelection();
+            }
+            return;
+         }
+
+         const start = clientToWorld(
+            event.clientX,
+            event.clientY,
+            viewportRef.current,
+            viewportEl,
+         );
+         const startScreen = clientToViewport(event.clientX, event.clientY, viewportEl);
          marqueeDragRef.current = {
             pointerId: event.pointerId,
             start,
             current: start,
+            startScreen,
+            currentScreen: startScreen,
             active: false,
             additive: event.shiftKey,
+            viewportEl,
          };
-         setMarqueeRect(null);
+         setMarqueeScreenRect(null);
          setMarqueePreviewIds(null);
-         canvasRef.current?.setPointerCapture(event.pointerId);
-         event.stopPropagation();
-      },
-      [isMarqueeBlockedTarget, onSelectBoundary, relationshipMode, viewport],
-   );
+         viewportEl.setPointerCapture(event.pointerId);
+         event.preventDefault();
+      };
+
+      document.addEventListener('pointerdown', onPointerDown, true);
+      return () => document.removeEventListener('pointerdown', onPointerDown, true);
+   }, [
+      isMarqueeBlockedTarget,
+      onClearTopicSelection,
+      onSelectBoundary,
+      onSelectSummary,
+      relationshipMode,
+   ]);
 
    const handleEditingChange = useCallback(
       (topicId: TopicId, editing: boolean) => {
@@ -469,17 +549,24 @@ export function MindMapCanvas({
    };
    const rootLayout = layout.nodes.get(sheet.rootTopicId);
    const legendStickerIds = useMemo(() => collectSheetStickerIds(sheet), [sheet]);
-   const marqueeStyle =
-      marqueeRect == null
-         ? null
-         : {
-              left: marqueeRect.x - layout.bounds.x,
-              top: marqueeRect.y - layout.bounds.y,
-              width: marqueeRect.width,
-              height: marqueeRect.height,
-           };
+   const viewportPortalTarget = canvasRef.current?.closest('.viewport') ?? null;
 
    return (
+      <>
+         {marqueeScreenRect && viewportPortalTarget instanceof HTMLElement
+            ? createPortal(
+                 <div
+                    className="mindmap-canvas__marquee"
+                    style={{
+                       left: marqueeScreenRect.x,
+                       top: marqueeScreenRect.y,
+                       width: marqueeScreenRect.width,
+                       height: marqueeScreenRect.height,
+                    }}
+                 />,
+                 viewportPortalTarget,
+              )
+            : null}
       <div
          ref={canvasRef}
          className="mindmap-canvas"
@@ -489,7 +576,6 @@ export function MindMapCanvas({
             width: layout.bounds.width,
             height: layout.bounds.height,
          }}
-         onPointerDown={handleCanvasPointerDown}
       >
          <EdgeLayer
             edges={layout.edges}
@@ -502,6 +588,13 @@ export function MindMapCanvas({
             nodes={layout.nodes}
             bounds={layout.bounds}
          />
+         <SummaryBackgroundLayer
+            sheet={sheet}
+            summaries={sheet.summaries ?? []}
+            nodes={layout.nodes}
+            bounds={layout.bounds}
+            selectedSummaryId={selectedSummaryId}
+         />
          <RelationshipLayer
             relationships={sheet.relationships ?? []}
             nodes={layout.nodes}
@@ -512,9 +605,6 @@ export function MindMapCanvas({
             onSelectRelationship={onSelectRelationship}
             onUpdateRelationship={onUpdateRelationship}
          />
-         {marqueeStyle ? (
-            <div className="mindmap-canvas__marquee" style={marqueeStyle} />
-         ) : null}
          <div
             className="mindmap-canvas__topics"
             style={{
@@ -622,6 +712,19 @@ export function MindMapCanvas({
             onUpdateBoundary={onUpdateBoundary}
             onSelectTopic={onBoundarySelectTopic ?? handleTopicSelect}
          />
+         <SummaryInteractionLayer
+            sheet={sheet}
+            summaries={sheet.summaries ?? []}
+            nodes={layout.nodes}
+            bounds={layout.bounds}
+            selectedSummaryId={selectedSummaryId}
+            zoom={viewportZoom}
+            onSelectSummary={onSelectSummary}
+            onUpdateSummary={onUpdateSummary}
+            onUpdateSummaryText={onUpdateSummaryText}
+            onSelectTopic={onSummarySelectTopic ?? handleTopicSelect}
+         />
       </div>
+      </>
    );
 }

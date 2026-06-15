@@ -57,6 +57,7 @@ export function duplicateSheet(source: Sheet, title?: string): Sheet {
       id: nanoid(),
       parentId: remap(summary.parentId),
       summaryTopicId: remap(summary.summaryTopicId),
+      topicIds: summary.topicIds?.map(remap),
     })),
   };
 }

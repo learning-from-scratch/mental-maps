@@ -29,9 +29,12 @@ function rectsIntersect(a: SelectionRect, b: SelectionRect): boolean {
 export function topicIdsInSelectionRect(
   nodes: Map<TopicId, NodeLayout>,
   rect: SelectionRect,
+  excludeTopicIds: TopicId[] = [],
 ): TopicId[] {
+  const excluded = new Set(excludeTopicIds);
   const hits: TopicId[] = [];
   for (const [topicId, node] of nodes) {
+    if (excluded.has(topicId)) continue;
     const bounds: SelectionRect = {
       x: node.x,
       y: node.y,

@@ -33,6 +33,10 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
   return Boolean((target as HTMLElement | null)?.closest(INTERACTIVE_SELECTOR));
 }
 
+export function isViewportInteractiveTarget(target: EventTarget | null): boolean {
+  return isInteractiveTarget(target);
+}
+
 /** Pixel-mode wheel events come from trackpads; line-mode is usually a mouse wheel. */
 function isTrackpadWheel(event: WheelEvent): boolean {
   if (event.ctrlKey || event.metaKey) return false;
@@ -144,9 +148,9 @@ export function Viewport({
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    const isLeftPan = event.button === 0;
-    const isRightPan = event.button === 2;
-    if (!isLeftPan && !isRightPan) return;
+    // Left-click drag selects (marquee). Pan with right/middle mouse or two-finger swipe.
+    const isPanButton = event.button === 1 || event.button === 2;
+    if (!isPanButton) return;
     if (isInteractiveTarget(event.target)) return;
 
     const active = document.activeElement;

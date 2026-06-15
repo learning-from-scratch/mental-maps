@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { addChild, addSibling, deleteTopics } from '@/core/commands/commands';
 import { duplicateSheet } from '@/core/model/duplicateSheet';
-import { createSheet } from '@/core/model/factories';
+import { createSheet, createTopic } from '@/core/model/factories';
 import type { ProjectState } from '@/core/model/project';
 import {
    createEmptyProject,
@@ -18,8 +18,13 @@ import {
    createTopicLinkRef,
    topicDisplayText,
 } from '@/core/model/link';
-import type { Sheet, SheetId, TopicId, MarkerId, Vec2, Relationship, Boundary } from '@/core/model/types';
+import type { Sheet, SheetId, TopicId, MarkerId, Vec2, Relationship, Boundary, Summary } from '@/core/model/types';
 import { boundariesFromSelection, boundaryMatchesSelection } from '@/core/model/boundaries';
+import {
+   DEFAULT_SUMMARY_TEXT,
+   summariesFromSelection,
+   summaryMatchesSelection,
+} from '@/core/model/summaries';
 import { createRelationship } from '@/core/model/relationships';
 import { createSampleDocument } from '@/demo/sampleDocument';
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
@@ -280,6 +285,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
    const [relationshipDraft, setRelationshipDraft] = useState<RelationshipDraft | null>(null);
    const [selectedRelationshipId, setSelectedRelationshipId] = useState<string | null>(null);
    const [selectedBoundaryId, setSelectedBoundaryId] = useState<string | null>(null);
+   const [selectedSummaryId, setSelectedSummaryId] = useState<string | null>(null);
    const [showHome, setShowHome] = useState(false);
 
    const queueNavHintForSheet = useCallback((sheetId: SheetId) => {
@@ -902,6 +908,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
          applyTopicPanelDismissals(topicId);
          setEquationSelectedTopicId(null);
          setSelectedBoundaryId(null);
+         setSelectedSummaryId(null);
          setEditingTopicId(null);
          setSelectedTopicIds((current) =>
             options?.additive ? toggleTopicInSelection(current, topicId) : [topicId],
@@ -914,6 +921,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       (topicIds: TopicId[], options?: { additive?: boolean }) => {
          setEquationSelectedTopicId(null);
          setSelectedBoundaryId(null);
+         setSelectedSummaryId(null);
          if (topicIds.length === 0) {
             setSelectedTopicIds([]);
             return;
@@ -1328,6 +1336,43 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       setSelectedBoundaryId(null);
    }, [selectedBoundaryId, updateActiveSheet]);
 
+   const updateSummary = useCallback(
+      (summaryId: string, patch: Partial<Summary>) => {
+         updateActiveSheet((draft) => {
+            const summary = draft.summaries.find((item) => item.id === summaryId);
+            if (!summary) return;
+            Object.assign(summary, patch);
+         });
+      },
+      [updateActiveSheet],
+   );
+
+   const updateSummaryText = useCallback(
+      (summaryId: string, text: string) => {
+         if (!sheet) return;
+         const summary = sheet.summaries.find((item) => item.id === summaryId);
+         if (!summary) return;
+         updateActiveSheet((draft) => {
+            const topic = draft.topicsById[summary.summaryTopicId];
+            if (topic) topic.text = text;
+         });
+      },
+      [sheet, updateActiveSheet],
+   );
+
+   const deleteSelectedSummary = useCallback(() => {
+      if (!selectedSummaryId || !sheet) return;
+      const summaryId = selectedSummaryId;
+      const summary = sheet.summaries.find((item) => item.id === summaryId);
+      updateActiveSheet((draft) => {
+         draft.summaries = draft.summaries.filter((item) => item.id !== summaryId);
+         if (summary) {
+            delete draft.topicsById[summary.summaryTopicId];
+         }
+      });
+      setSelectedSummaryId(null);
+   }, [selectedSummaryId, sheet, updateActiveSheet]);
+
    const addBoundaryFromSelection = useCallback(() => {
       if (!sheet || selectedTopicIds.length === 0) return;
 
@@ -1354,6 +1399,43 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
 
       if (createdIds.length > 0) {
          setSelectedBoundaryId(createdIds[createdIds.length - 1]!);
+         setSelectedTopicIds([]);
+         dismissTopicPanels();
+      }
+   }, [sheet, selectedTopicIds, updateActiveSheet, dismissTopicPanels]);
+
+   const addSummaryFromSelection = useCallback(() => {
+      if (!sheet || selectedTopicIds.length === 0) return;
+
+      const candidates = summariesFromSelection(sheet, selectedTopicIds);
+      if (candidates.length === 0) return;
+
+      const createdIds: string[] = [];
+
+      updateActiveSheet((draft) => {
+         for (const candidate of candidates) {
+            const existing = draft.summaries.find((summary) =>
+               summaryMatchesSelection(summary, candidate),
+            );
+            if (existing) {
+               createdIds.push(existing.id);
+               continue;
+            }
+
+            const summaryTopicId = `summary-topic-${crypto.randomUUID()}`;
+            draft.topicsById[summaryTopicId] = createTopic({
+               id: summaryTopicId,
+               text: DEFAULT_SUMMARY_TEXT,
+            });
+
+            const id = `summary-${crypto.randomUUID()}`;
+            draft.summaries.push({ ...candidate, id, summaryTopicId });
+            createdIds.push(id);
+         }
+      });
+
+      if (createdIds.length > 0) {
+         setSelectedSummaryId(createdIds[createdIds.length - 1]!);
          setSelectedTopicIds([]);
          dismissTopicPanels();
       }
@@ -1458,6 +1540,22 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
             return;
          }
 
+         if (event.key === 'Delete' && selectedSummaryId) {
+            const target = event.target;
+            if (
+               target instanceof HTMLInputElement ||
+               target instanceof HTMLTextAreaElement ||
+               target instanceof HTMLSelectElement ||
+               (target instanceof HTMLElement && target.isContentEditable)
+            ) {
+               return;
+            }
+
+            event.preventDefault();
+            deleteSelectedSummary();
+            return;
+         }
+
          if (
             (event.ctrlKey || event.metaKey) &&
             event.shiftKey &&
@@ -1465,6 +1563,16 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
          ) {
             event.preventDefault();
             addBoundaryFromSelection();
+            return;
+         }
+
+         if (
+            (event.ctrlKey || event.metaKey) &&
+            event.shiftKey &&
+            event.key.toLowerCase() === 's'
+         ) {
+            event.preventDefault();
+            addSummaryFromSelection();
             return;
          }
 
@@ -1488,11 +1596,14 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       relationshipMode,
       selectedRelationshipId,
       selectedBoundaryId,
+      selectedSummaryId,
       cancelRelationshipMode,
       startRelationshipMode,
       deleteSelectedRelationship,
       deleteSelectedBoundary,
+      deleteSelectedSummary,
       addBoundaryFromSelection,
+      addSummaryFromSelection,
    ]);
 
    useEffect(() => {
@@ -2136,6 +2247,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                onAddRelationship={startRelationshipMode}
                relationshipModeActive={relationshipMode !== null}
                onAddBoundary={addBoundaryFromSelection}
+               onAddSummary={addSummaryFromSelection}
                hasTopicSelection={selectedTopicIds.length > 0}
                onAddContent={openNotesPanel}
                onAddLabel={openLabelPanel}
@@ -2163,6 +2275,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                   clearTopicSelection();
                   setSelectedRelationshipId(null);
                   setSelectedBoundaryId(null);
+                  setSelectedSummaryId(null);
                   cancelRelationshipMode();
                }}
                overlay={
@@ -2270,10 +2383,23 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                      if (boundaryId) {
                         setSelectedTopicIds([]);
                         setSelectedRelationshipId(null);
+                        setSelectedSummaryId(null);
                         dismissTopicPanels();
                      }
                   }}
                   onUpdateBoundary={updateBoundary}
+                  selectedSummaryId={selectedSummaryId}
+                  onSelectSummary={(summaryId) => {
+                     setSelectedSummaryId(summaryId);
+                     if (summaryId) {
+                        setSelectedTopicIds([]);
+                        setSelectedRelationshipId(null);
+                        setSelectedBoundaryId(null);
+                        dismissTopicPanels();
+                     }
+                  }}
+                  onUpdateSummary={updateSummary}
+                  onUpdateSummaryText={updateSummaryText}
                />
             </Viewport>
             <RightSidebars

@@ -69,7 +69,7 @@ describe('boundariesFromSelection', () => {
     expect(boundaries[0]?.topicIds).toEqual([first, second]);
   });
 
-  it('wraps only the root topic when the root is selected', () => {
+  it('does not create a boundary when only the root is selected', () => {
     const state = createDocumentState(createDocument());
     const sheet = getSheet(state.doc, sheetId(state));
     const rootId = sheet.rootTopicId;
@@ -78,8 +78,8 @@ describe('boundariesFromSelection', () => {
     const after = getSheet(state.doc, sheetId(state));
     const boundaries = boundariesFromSelection(after, [rootId]);
 
-    expect(boundaries).toHaveLength(1);
-    expect(boundaries[0]?.topicIds).toEqual([rootId]);
+    expect(boundaries).toHaveLength(0);
+    expect(filterSelectionRoots(after, [rootId])).toEqual([]);
   });
 
   it('uses topicIds for geometry so only selected branches are included', () => {
