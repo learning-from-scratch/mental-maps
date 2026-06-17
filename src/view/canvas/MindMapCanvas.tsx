@@ -43,6 +43,10 @@ const SUMMARY_KEEP_SELECTION_SELECTOR =
 const BOUNDARY_KEEP_SELECTION_SELECTOR =
    '.boundary-layer__handle, .boundary-layer__add-label, .boundary-layer__label, .boundary-layer__label--interactive';
 
+/** Clicks on these keep the relationship selected. */
+const RELATIONSHIP_KEEP_SELECTION_SELECTOR =
+   '.relationship-layer__path-hit, .relationship-layer__handle, .relationship-layer__label-wrap';
+
 interface MindMapCanvasProps {
    sheet: Sheet;
    selectedTopicIds: TopicId[];
@@ -96,6 +100,7 @@ interface MindMapCanvasProps {
    selectedRelationshipId?: string | null;
    onRelationshipTopicClick?: (topicId: TopicId) => void;
    onRelationshipCursorMove?: (point: Vec2) => void;
+   onCancelRelationshipMode?: () => void;
    onSelectRelationship?: (relationshipId: string | null) => void;
    onUpdateRelationship?: (relationshipId: string, patch: Partial<Relationship>) => void;
    selectedBoundaryId?: string | null;
@@ -156,6 +161,7 @@ export function MindMapCanvas({
    selectedRelationshipId = null,
    onRelationshipTopicClick,
    onRelationshipCursorMove,
+   onCancelRelationshipMode,
    onSelectRelationship = () => {},
    onUpdateRelationship = () => {},
    selectedBoundaryId = null,
@@ -192,30 +198,46 @@ export function MindMapCanvas({
    } | null>(null);
    const [marqueeScreenRect, setMarqueeScreenRect] = useState<SelectionRect | null>(null);
    const [marqueePreviewIds, setMarqueePreviewIds] = useState<TopicId[] | null>(null);
+   const relationshipModeRef = useRef(relationshipMode);
+   relationshipModeRef.current = relationshipMode;
+   const onRelationshipCursorMoveRef = useRef(onRelationshipCursorMove);
+   onRelationshipCursorMoveRef.current = onRelationshipCursorMove;
+   const onCancelRelationshipModeRef = useRef(onCancelRelationshipMode);
+   onCancelRelationshipModeRef.current = onCancelRelationshipMode;
+   const lastPointerWorldRef = useRef<Vec2 | null>(null);
    const selectedTopicIdSet = useMemo(() => new Set(selectedTopicIds), [selectedTopicIds]);
    const highlightedTopicIdSet = useMemo(() => {
       if (!marqueePreviewIds) return selectedTopicIdSet;
       return new Set(marqueePreviewIds);
    }, [marqueePreviewIds, selectedTopicIdSet]);
 
+   const updateRelationshipCursor = useCallback((clientX: number, clientY: number) => {
+      const container = canvasRef.current?.closest('.viewport');
+      if (!(container instanceof HTMLElement)) return;
+      const world = clientToWorld(clientX, clientY, viewportRef.current, container);
+      lastPointerWorldRef.current = world;
+      if (relationshipModeRef.current === 'pick-end') {
+         onRelationshipCursorMoveRef.current?.(world);
+      }
+   }, []);
+
    useEffect(() => {
-      if (!relationshipDraft || !onRelationshipCursorMove) return;
+      if (relationshipMode !== 'pick-end') return;
 
       const onPointerMove = (event: PointerEvent) => {
-         const container = canvasRef.current?.closest('.viewport') as HTMLElement | null;
-         if (!container) return;
-         onRelationshipCursorMove(
-            clientToWorld(event.clientX, event.clientY, viewport, container),
-         );
+         updateRelationshipCursor(event.clientX, event.clientY);
       };
 
       window.addEventListener('pointermove', onPointerMove);
       return () => window.removeEventListener('pointermove', onPointerMove);
-   }, [relationshipDraft, onRelationshipCursorMove, viewport]);
+   }, [relationshipMode, updateRelationshipCursor]);
 
    const handleTopicSelect = useCallback(
       (topicId: TopicId, options?: { additive?: boolean }) => {
          if (relationshipMode) {
+            if (lastPointerWorldRef.current) {
+               onRelationshipCursorMoveRef.current?.(lastPointerWorldRef.current);
+            }
             onRelationshipTopicClick?.(topicId);
             return;
          }
@@ -254,8 +276,10 @@ export function MindMapCanvas({
          }
          onSelectBoundary(null);
          onSelectSummary(null);
+         onSelectRelationship(null);
+         onCancelRelationshipModeRef.current?.();
       },
-      [onClearTopicSelection, onSelectBoundary, onSelectSummary, onSelectTopics],
+      [onClearTopicSelection, onSelectBoundary, onSelectRelationship, onSelectSummary, onSelectTopics],
    );
 
    useEffect(() => {
@@ -306,9 +330,23 @@ export function MindMapCanvas({
 
    useEffect(() => {
       const onPointerDown = (event: PointerEvent) => {
-         if (event.button !== 0 || relationshipMode) return;
+         if (event.button !== 0) return;
          if (!(event.target instanceof Element)) return;
          const target = event.target;
+
+         if (relationshipModeRef.current) {
+            const viewportEl = target.closest('.viewport');
+            if (viewportEl instanceof HTMLElement) {
+               updateRelationshipCursor(event.clientX, event.clientY);
+            }
+
+            if (target.closest('.topic-view-wrap')) return;
+
+            if (!target.closest(RELATIONSHIP_KEEP_SELECTION_SELECTOR)) {
+               onCancelRelationshipModeRef.current?.();
+            }
+            return;
+         }
 
          if (!target.closest(SUMMARY_KEEP_SELECTION_SELECTOR)) {
             const summaryEditorActive = document.querySelector(
@@ -320,6 +358,9 @@ export function MindMapCanvas({
          }
          if (!target.closest(BOUNDARY_KEEP_SELECTION_SELECTOR)) {
             onSelectBoundary(null);
+         }
+         if (!target.closest(RELATIONSHIP_KEEP_SELECTION_SELECTOR)) {
+            onSelectRelationship(null);
          }
 
          const viewportEl = target.closest('.viewport');
@@ -369,8 +410,9 @@ export function MindMapCanvas({
       isMarqueeBlockedTarget,
       onClearTopicSelection,
       onSelectBoundary,
+      onSelectRelationship,
       onSelectSummary,
-      relationshipMode,
+      updateRelationshipCursor,
    ]);
 
    const handleEditingChange = useCallback(

@@ -2369,6 +2369,7 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
                   selectedRelationshipId={selectedRelationshipId}
                   onRelationshipTopicClick={handleRelationshipTopicClick}
                   onRelationshipCursorMove={handleRelationshipCursorMove}
+                  onCancelRelationshipMode={cancelRelationshipMode}
                   onSelectRelationship={(relationshipId) => {
                      setSelectedRelationshipId(relationshipId);
                      if (relationshipId) {
