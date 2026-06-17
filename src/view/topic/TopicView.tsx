@@ -420,9 +420,8 @@ export function TopicView({
   );
   const attachmentIndicator = getTopicAttachmentIndicator(notes, linkAttachments);
   const singleLinkKind = soleLinkKind(linkAttachments);
-  const showAttachmentAffordance =
-    attachmentIndicator !== 'none' && !isRoot && (!hasEquation || !hasVisibleText);
   const isRoot = layout.depth === 0;
+  const showAttachmentAffordance = attachmentIndicator !== 'none' && !isRoot;
   const hasLabels = topicHasLabels(labels);
   const hasStickers = !isRoot && topicHasStickers(markers);
   const isMain = layout.depth === 1;
@@ -666,6 +665,7 @@ export function TopicView({
             onDelete={() => onDeleteEquation?.(topicId)}
             onDeselect={() => onEquationDeselect?.()}
             gridStyle={showSplitLayout ? equationLayoutStyle : undefined}
+            solo={!showSplitLayout}
           />
         ) : null}
         {hasStickers ? (

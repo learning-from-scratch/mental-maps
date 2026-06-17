@@ -35,6 +35,7 @@ interface TopicEquationDisplayProps {
   onDelete: () => void;
   onDeselect: () => void;
   gridStyle?: CSSProperties;
+  solo?: boolean;
 }
 
 const MIN_SCALE = 0.25;
@@ -57,6 +58,7 @@ export function TopicEquationDisplay({
   onDelete,
   onDeselect,
   gridStyle,
+  solo = false,
 }: TopicEquationDisplayProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [liveScale, setLiveScale] = useState<number | null>(null);
@@ -265,7 +267,7 @@ export function TopicEquationDisplay({
   return (
     <div
       ref={wrapRef}
-      className={`topic-view__equation topic-view__equation--grid${selected ? ' topic-view__equation--selected' : ''}${isDragging ? ' topic-view__equation--dragging' : ''}`}
+      className={`topic-view__equation topic-view__equation--grid${solo ? ' topic-view__equation--solo' : ''}${selected ? ' topic-view__equation--selected' : ''}${isDragging ? ' topic-view__equation--dragging' : ''}`}
       style={{ fontSize: `${scale}em`, ...gridStyle }}
       onPointerDown={(event) => {
         event.stopPropagation();

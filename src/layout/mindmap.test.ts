@@ -77,6 +77,17 @@ describe('layout engine', () => {
     expect(withAttachment.width).toBeGreaterThan(withoutAttachment.width);
   });
 
+  it('sizes equation-only topics to fit single-line latex', () => {
+    const equation = {
+      latex: String.raw`Y^{n \times k} = X^{n \times d} U^{d \times k}`,
+      placement: 'top' as const,
+    };
+    const measurement = measureTopic('', 2, undefined, false, equation);
+
+    expect(measurement.width).toBeGreaterThan(120);
+    expect(measurement.height).toBeGreaterThan(20);
+  });
+
   it('grows node width when stickers are added', () => {
     const text = 'Uso gd man na bla';
     const withoutStickers = measureTopic(text, 2);

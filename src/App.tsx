@@ -489,10 +489,23 @@ export function App({ mode = 'local', onSignOut }: AppProps) {
       isCloud && !cloudLoading && Boolean(activeProject),
    );
    const topicCount = sheet ? Object.keys(sheet.topicsById).length : 0;
+   const [layoutGeneration, setLayoutGeneration] = useState(0);
+
+   useEffect(() => {
+      let cancelled = false;
+      void document.fonts.ready.then(() => {
+         if (cancelled) return;
+         clearMeasureCache();
+         setLayoutGeneration((value) => value + 1);
+      });
+      return () => {
+         cancelled = true;
+      };
+   }, []);
 
    const mapLayout = useMemo(
       () => (sheet ? layoutSheet(sheet) : null),
-      [sheet, mapThemeId],
+      [sheet, mapThemeId, layoutGeneration],
    );
 
    const topicPanelAnchor = useCallback(

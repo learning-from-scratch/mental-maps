@@ -5,6 +5,7 @@ import type { TopicLinkKind } from '@/core/model/link';
 import { collectSheetStickerIds } from '@/core/model/stickers';
 import { collectDescendantIds } from '@/core/commands/tree';
 import { layoutSheet } from '@/layout';
+import { clearMeasureCache } from '@/layout/measure';
 import { collapseHandleCenterX } from '@/layout/edges';
 import { DEFAULT_MAP_THEME_ID } from '@/layout/theme';
 import { EdgeLayer } from '@/view/edge/EdgeLayer';
@@ -198,6 +199,7 @@ export function MindMapCanvas({
    } | null>(null);
    const [marqueeScreenRect, setMarqueeScreenRect] = useState<SelectionRect | null>(null);
    const [marqueePreviewIds, setMarqueePreviewIds] = useState<TopicId[] | null>(null);
+   const [layoutGeneration, setLayoutGeneration] = useState(0);
    const relationshipModeRef = useRef(relationshipMode);
    relationshipModeRef.current = relationshipMode;
    const onRelationshipCursorMoveRef = useRef(onRelationshipCursorMove);
@@ -210,6 +212,18 @@ export function MindMapCanvas({
       if (!marqueePreviewIds) return selectedTopicIdSet;
       return new Set(marqueePreviewIds);
    }, [marqueePreviewIds, selectedTopicIdSet]);
+
+   useEffect(() => {
+      let cancelled = false;
+      void document.fonts.ready.then(() => {
+         if (cancelled) return;
+         clearMeasureCache();
+         setLayoutGeneration((value) => value + 1);
+      });
+      return () => {
+         cancelled = true;
+      };
+   }, []);
 
    const updateRelationshipCursor = useCallback((clientX: number, clientY: number) => {
       const container = canvasRef.current?.closest('.viewport');
@@ -471,7 +485,7 @@ export function MindMapCanvas({
 
    const layout = useMemo(
       () => layoutSheet(layoutSheetInput, liveEdit?.topicId, themeId),
-      [layoutSheetInput, themeId, liveEdit?.topicId, liveEquationScale],
+      [layoutSheetInput, themeId, liveEdit?.topicId, liveEquationScale, layoutGeneration],
    );
    layoutNodesRef.current = layout.nodes;
 

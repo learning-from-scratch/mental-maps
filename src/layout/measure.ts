@@ -31,8 +31,6 @@ const EDIT_WIDTH_BUFFER = 6;
 const EQUATION_BASE_HEIGHT = 28;
 const EQUATION_VERTICAL_GAP = 6;
 const EQUATION_HORIZONTAL_GAP = 8;
-/** Matches .topic-view__equation horizontal padding (6px × 2). */
-const EQUATION_PADDING_X = 12;
 /** Matches .topic-view__equation vertical padding (4px × 2). */
 const EQUATION_PADDING_Y = 8;
 
@@ -45,11 +43,35 @@ function getEquationMeasureHost(): HTMLDivElement | null {
       equationMeasureHost = document.createElement('div');
       equationMeasureHost.className = 'topic-view__equation topic-view__equation-measure-host';
       equationMeasureHost.style.cssText =
-         'position:absolute;left:-9999px;top:-9999px;visibility:hidden;pointer-events:none;white-space:nowrap;';
+         'position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;z-index:-1;white-space:nowrap;width:max-content;max-width:none;';
       document.body.appendChild(equationMeasureHost);
    }
 
    return equationMeasureHost;
+}
+
+function measureRenderedEquationSize(host: HTMLDivElement): { width: number; height: number } {
+   const katex = host.querySelector('.katex') as HTMLElement | null;
+   const mathWrap = host.querySelector('.topic-view__equation-math') as HTMLElement | null;
+   const width = Math.ceil(
+      Math.max(
+         katex?.scrollWidth ?? 0,
+         mathWrap?.scrollWidth ?? 0,
+         host.scrollWidth,
+         host.offsetWidth,
+         host.getBoundingClientRect().width,
+      ),
+   );
+   const height = Math.ceil(
+      Math.max(
+         katex?.scrollHeight ?? 0,
+         mathWrap?.scrollHeight ?? 0,
+         host.scrollHeight,
+         host.offsetHeight,
+         host.getBoundingClientRect().height,
+      ),
+   );
+   return { width, height };
 }
 
 export function measureEquationBlock(
@@ -67,18 +89,17 @@ export function measureEquationBlock(
       host.style.fontSize = `${baseFontSize * scale}px`;
       host.style.lineHeight = '1';
       host.innerHTML = `<span class="topic-view__equation-math">${rendered.html}</span>`;
+      void host.offsetHeight;
 
-      const rect = host.getBoundingClientRect();
-      const renderedHeight = Math.max(rect.height, host.scrollHeight, host.offsetHeight);
-      const renderedWidth = Math.max(rect.width, host.scrollWidth, host.offsetWidth);
-      const width = Math.ceil(renderedWidth) + EQUATION_PADDING_X;
-      const height = Math.ceil(renderedHeight) + EQUATION_PADDING_Y;
+      const measured = measureRenderedEquationSize(host);
       host.innerHTML = '';
-      return { width, height };
+      if (measured.width > 0 && measured.height > 0) {
+         return measured;
+      }
    }
 
    const latexLength = equation!.latex.length;
-   const width = Math.ceil((latexLength * 6 + 24) * scale) + EQUATION_PADDING_X;
+   const width = Math.ceil((latexLength * 8 + 32) * scale);
    const height = Math.ceil(EQUATION_BASE_HEIGHT * scale) + EQUATION_PADDING_Y;
    return { width, height };
 }

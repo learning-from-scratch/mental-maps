@@ -793,10 +793,19 @@ body,
 
 .topic-view__content--equation-only.topic-view__content--has-attachments {
    gap: 6px;
+   flex-wrap: nowrap;
+}
+
+.topic-view__content--equation-only.topic-view__content--has-attachments .topic-view__equation {
+   flex: 0 0 auto;
+   min-width: min-content;
 }
 
 .topic-view__content--has-attachments .topic-view__attachment-button {
    margin-left: 6px;
+   flex-shrink: 0;
+   position: relative;
+   z-index: 2;
 }
 
 .topic-view__content--attachments-only:not(.topic-view__content--has-equation) .topic-view__attachment-button {
@@ -1356,7 +1365,7 @@ body,
    display: flex;
    align-items: center;
    justify-content: center;
-   min-width: 0;
+   min-width: min-content;
    min-height: 0;
    grid-area: equation;
    align-self: center;
@@ -1396,6 +1405,9 @@ body,
    cursor: pointer;
    line-height: 1;
    width: fit-content;
+   max-width: none;
+   min-width: min-content;
+   white-space: nowrap;
    z-index: 1;
 }
 
@@ -1410,11 +1422,14 @@ body,
 
 .topic-view__equation-math {
    display: inline-block;
+   white-space: nowrap;
+   max-width: none;
    pointer-events: none;
 }
 
 .topic-view__equation-math .katex {
    color: inherit;
+   white-space: nowrap;
 }
 
 .topic-view__equation--selected {
