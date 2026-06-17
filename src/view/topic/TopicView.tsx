@@ -420,6 +420,8 @@ export function TopicView({
   );
   const attachmentIndicator = getTopicAttachmentIndicator(notes, linkAttachments);
   const singleLinkKind = soleLinkKind(linkAttachments);
+  const showAttachmentAffordance =
+    attachmentIndicator !== 'none' && !isRoot && (!hasEquation || !hasVisibleText);
   const isRoot = layout.depth === 0;
   const hasLabels = topicHasLabels(labels);
   const hasStickers = !isRoot && topicHasStickers(markers);
@@ -440,8 +442,7 @@ export function TopicView({
     .join(' ');
 
   const stickerCount = hasStickers ? sortTopicStickers(markers).length : 0;
-  const showAttachmentForMeasure =
-    attachmentIndicator !== 'none' && !isRoot && !hasEquation;
+  const showAttachmentForMeasure = showAttachmentAffordance;
 
   const editMeasurement = useMemo(() => {
     if (!isEditing) return null;
@@ -610,10 +611,22 @@ export function TopicView({
         ) : null}
       <div
         ref={contentRef}
-        className={`topic-view__content${isEditing ? ' topic-view__content--editing' : ''}${showSplitLayout ? ` topic-view__content--has-equation topic-view__content--grid topic-view__content--eq-${eqPlacement}` : ''}${equationOnly && !isEditing ? ' topic-view__content--equation-only' : ''}`}
+        className={`topic-view__content${isEditing ? ' topic-view__content--editing' : ''}${showSplitLayout ? ` topic-view__content--has-equation topic-view__content--grid topic-view__content--eq-${eqPlacement}` : ''}${equationOnly && !isEditing ? ' topic-view__content--equation-only' : ''}${showAttachmentAffordance ? ' topic-view__content--has-attachments' : ''}${showAttachmentAffordance && !hasVisibleText && !isEditing ? ' topic-view__content--attachments-only' : ''}`}
         onDoubleClick={(event) => {
           if (isEditing || isRoot || equationSelected) return;
           if (event.target instanceof HTMLElement && event.target.closest('.topic-view__text')) {
+            return;
+          }
+          if (
+            event.target instanceof HTMLElement &&
+            event.target.closest('.topic-view__attachment-button, .topic-stickers__item')
+          ) {
+            return;
+          }
+          if (!hasEquation && !hasVisibleText) {
+            event.stopPropagation();
+            event.preventDefault();
+            beginEdit({ caretIndex: 0 });
             return;
           }
           if (!hasEquation) return;
@@ -721,7 +734,7 @@ export function TopicView({
               ))}
             </div>
           </div>
-        ) : !hasEquation ? (
+        ) : !hasEquation && (hasVisibleText || !showAttachmentAffordance || isEditing) ? (
           <div
             ref={textRef}
             className="topic-view__text"
@@ -743,7 +756,7 @@ export function TopicView({
             ))}
           </div>
         ) : null}
-        {attachmentIndicator !== 'none' && !isEditing && !isRoot && !hasEquation ? (
+        {showAttachmentAffordance && !isEditing ? (
           <button
             ref={attachmentButtonRef}
             type="button"
@@ -816,7 +829,7 @@ export function TopicView({
           onClose={() => setStickerMenu(null)}
         />
       ) : null}
-      {attachmentsMenuOpen && attachmentIndicator === 'multiple' && !isEditing && !isRoot ? (
+      {attachmentsMenuOpen && attachmentIndicator === 'multiple' && showAttachmentAffordance && !isEditing ? (
         <TopicAttachmentsMenu
           notes={notes}
           webLink={webLink}

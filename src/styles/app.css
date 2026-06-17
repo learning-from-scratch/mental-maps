@@ -787,6 +787,22 @@ body,
    text-align: left;
 }
 
+.topic-view__content--attachments-only {
+   gap: 0;
+}
+
+.topic-view__content--equation-only.topic-view__content--has-attachments {
+   gap: 6px;
+}
+
+.topic-view__content--has-attachments .topic-view__attachment-button {
+   margin-left: 6px;
+}
+
+.topic-view__content--attachments-only:not(.topic-view__content--has-equation) .topic-view__attachment-button {
+   margin-left: 0;
+}
+
 .topic-view__notes-button,
 .topic-view__attachment-button {
    flex: 0 0 auto;

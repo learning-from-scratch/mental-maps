@@ -58,6 +58,25 @@ describe('layout engine', () => {
     expect(measurement.height).toBeGreaterThan(measurement.lineHeight);
   });
 
+  it('reserves attachment affordance width for empty textless topics with notes', () => {
+    const withoutAttachment = measureTopic('', 2);
+    const withAttachment = measureTopic('', 2, undefined, true);
+
+    expect(withAttachment.width).toBeGreaterThan(withoutAttachment.width);
+    expect(withAttachment.height).toBeGreaterThanOrEqual(withoutAttachment.height);
+  });
+
+  it('reserves attachment affordance beside equation-only topics', () => {
+    const equation = {
+      latex: 'E=mc^2',
+      placement: 'top' as const,
+    };
+    const withoutAttachment = measureTopic('', 2, undefined, false, equation);
+    const withAttachment = measureTopic('', 2, undefined, true, equation);
+
+    expect(withAttachment.width).toBeGreaterThan(withoutAttachment.width);
+  });
+
   it('grows node width when stickers are added', () => {
     const text = 'Uso gd man na bla';
     const withoutStickers = measureTopic(text, 2);

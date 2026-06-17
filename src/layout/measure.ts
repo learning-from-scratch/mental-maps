@@ -435,9 +435,14 @@ export function measureTopic(
       contentHeight = Math.max(contentHeight, lineHeight);
    }
 
+   if (!hasVisibleText && showAttachmentIcon && innerAffordances > 0) {
+      contentWidth = Math.max(contentWidth, padX * 2 + innerAffordances);
+      contentHeight = Math.max(contentHeight, lineHeight);
+   }
+
    if (equationBlock) {
       if (equationOnly) {
-         contentWidth = equationBlock.width + padX * 2;
+         contentWidth = equationBlock.width + padX * 2 + (showAttachmentIcon ? innerAffordances : 0);
          contentHeight = equationBlock.height;
          lines = [];
       } else {
