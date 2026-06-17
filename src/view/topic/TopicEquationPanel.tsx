@@ -26,6 +26,7 @@ export function TopicEquationPanel({
   registerCommit,
 }: TopicEquationPanelProps) {
   const [latex, setLatex] = useState(initialLatex);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -58,6 +59,23 @@ export function TopicEquationPanel({
   }, [latex, registerCommit]);
 
   useEffect(() => {
+    let onPointerDown: ((event: PointerEvent) => void) | null = null;
+    const timeout = window.setTimeout(() => {
+      onPointerDown = (event: PointerEvent) => {
+        if (!wrapRef.current?.contains(event.target as Node)) {
+          onClose();
+        }
+      };
+      window.addEventListener('pointerdown', onPointerDown);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeout);
+      if (onPointerDown) window.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [onClose]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.stopPropagation();
@@ -73,6 +91,7 @@ export function TopicEquationPanel({
 
   return (
     <div
+      ref={wrapRef}
       className="topic-equation-panel-wrap"
       style={
         {

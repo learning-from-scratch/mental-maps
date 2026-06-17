@@ -35,6 +35,7 @@ export function TopicNotesPanel({
   onClose,
   registerCommit,
 }: TopicNotesPanelProps) {
+  const wrapRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -70,6 +71,23 @@ export function TopicNotesPanel({
   }, [registerCommit]);
 
   useEffect(() => {
+    let onPointerDown: ((event: PointerEvent) => void) | null = null;
+    const timeout = window.setTimeout(() => {
+      onPointerDown = (event: PointerEvent) => {
+        if (!wrapRef.current?.contains(event.target as Node)) {
+          onClose();
+        }
+      };
+      window.addEventListener('pointerdown', onPointerDown);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeout);
+      if (onPointerDown) window.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [onClose]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.stopPropagation();
@@ -83,6 +101,7 @@ export function TopicNotesPanel({
 
   return (
     <div
+      ref={wrapRef}
       className="topic-notes-panel-wrap"
       style={
         {

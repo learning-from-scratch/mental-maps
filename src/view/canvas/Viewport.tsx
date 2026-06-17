@@ -44,6 +44,22 @@ function isTrackpadWheel(event: WheelEvent): boolean {
   return event.deltaMode === WheelEvent.DOM_DELTA_PIXEL;
 }
 
+function canScrollInDirection(target: EventTarget | null, deltaY: number): boolean {
+  let element = target instanceof HTMLElement ? target : null;
+  while (element) {
+    const { overflowY } = getComputedStyle(element);
+    if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') {
+      const { scrollTop, scrollHeight, clientHeight } = element;
+      if (scrollHeight > clientHeight + 1) {
+        if (deltaY > 0 && scrollTop + clientHeight < scrollHeight - 1) return true;
+        if (deltaY < 0 && scrollTop > 0) return true;
+      }
+    }
+    element = element.parentElement;
+  }
+  return false;
+}
+
 export function Viewport({
   children,
   overlay,
@@ -106,6 +122,8 @@ export function Viewport({
     if (!container) return;
 
     const onWheel = (event: WheelEvent) => {
+      if (canScrollInDirection(event.target, event.deltaY)) return;
+
       event.preventDefault();
 
       const rect = container.getBoundingClientRect();
